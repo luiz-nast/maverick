@@ -1,0 +1,19 @@
+[project]
+name = "yt-limit"
+version = "0.1.0"
+description = "Limite diário de YouTube para Linux: conta só o tempo com vídeo tocando (via MPRIS) e mostra um contador na tela."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+# Depende do PyGObject do sistema (python3-gi + GTK3); não há dependências pip.
+dependencies = []
+
+[project.scripts]
+yt-limit = "yt_limit.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["yt_limit*"]
