@@ -1,4 +1,4 @@
-"""Janelas GTK: o contador flutuante no canto da tela e a tela de bloqueio."""
+"""Janela GTK: o contador flutuante no canto da tela."""
 
 from __future__ import annotations
 
@@ -30,14 +30,6 @@ CSS = b"""
 .pill.playing { color: #7CFC9A; }
 .pill.warning { color: #FFD166; }
 .pill.blocked { color: #FF6B6B; }
-
-.block-bg {
-  background-color: rgba(10, 10, 10, 0.96);
-  color: #ffffff;
-}
-.block-title { font-size: 42px; font-weight: bold; color: #FF6B6B; }
-.block-text  { font-size: 20px; color: #dddddd; }
-.block-small { font-size: 14px; color: #888888; }
 """
 
 
@@ -91,7 +83,10 @@ class Overlay(Gtk.Window):
 
     def update(self, used: int, limit: int, state: str) -> None:
         icon = {"playing": "▶", "warning": "▶", "blocked": "⛔", "idle": "⏸"}[state]
-        self.label.set_text(f"{icon} {fmt(used)} / {fmt(limit)}")
+        self.show_message(f"{icon} {fmt(used)} / {fmt(limit)}", state)
+
+    def show_message(self, text: str, state: str) -> None:
+        self.label.set_text(text)
         ctx = self.label.get_style_context()
         if self._state_class:
             ctx.remove_class(self._state_class)
@@ -100,52 +95,3 @@ class Overlay(Gtk.Window):
         if not self.get_visible():
             self.show_all()
         self._place()
-
-
-class BlockScreen(Gtk.Window):
-    """Tela cheia semi-opaca mostrada ao atingir o limite. Some ao pressionar Esc,
-    mas volta a aparecer se um vídeo do YouTube voltar a tocar."""
-
-    def __init__(self) -> None:
-        super().__init__(type=Gtk.WindowType.TOPLEVEL)
-        self.set_title("yt-limit — limite atingido")
-        self.set_decorated(False)
-        self.set_keep_above(True)
-        self.set_skip_taskbar_hint(True)
-        self.stick()
-        self.get_style_context().add_class("block-bg")
-
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
-        box.set_valign(Gtk.Align.CENTER)
-        box.set_halign(Gtk.Align.CENTER)
-        title = Gtk.Label(label="Chega de YouTube por hoje")
-        title.get_style_context().add_class("block-title")
-        self.text = Gtk.Label(label="")
-        self.text.get_style_context().add_class("block-text")
-        self.text.set_justify(Gtk.Justification.CENTER)
-        hint = Gtk.Label(label="Esc fecha este aviso. O vídeo continua pausado até amanhã.")
-        hint.get_style_context().add_class("block-small")
-        for w in (title, self.text, hint):
-            box.pack_start(w, False, False, 0)
-        self.add(box)
-
-        self.connect("delete-event", lambda *_: True)
-        self.connect("key-press-event", self._on_key)
-        self.dismissed = False
-
-    def _on_key(self, _w, event) -> bool:
-        if event.keyval == Gdk.KEY_Escape:
-            self.dismissed = True
-            self.hide()
-        return True
-
-    def show_blocked(self, used: int, limit: int, until_reset: str) -> None:
-        self.text.set_text(
-            f"Você usou {fmt(used)} dos {fmt(limit)} de hoje.\n"
-            f"O contador zera em {until_reset}."
-        )
-        if not self.get_visible():
-            self.dismissed = False
-            self.fullscreen()
-            self.show_all()
-            self.present()

@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 import shutil
 import subprocess
-from datetime import datetime, timedelta
+import time
 
 from gi.repository import GLib
 
@@ -25,13 +25,6 @@ def notify(summary: str, body: str = "", urgency: str = "normal") -> None:
         )
 
 
-def until_midnight() -> str:
-    now = datetime.now()
-    midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-    left = int((midnight - now).total_seconds())
-    return f"{left // 3600}h{(left % 3600) // 60:02d}"
-
-
 class App:
     SAVE_EVERY = 5  # segundos
 
@@ -40,17 +33,17 @@ class App:
         self.state = State.load()
         self.mpris = Mpris()
         self.debug = debug
-        self.overlay = self.block = None
+        self.overlay = None
         if show_overlay:
-            from .overlay import BlockScreen, Overlay  # GTK só quando há janela
+            from .overlay import Overlay  # GTK só quando há janela
 
             self.overlay = Overlay()
-            self.block = BlockScreen()
         self._ticks_since_save = 0
         self._warned = False
-        self._blocked_notified = False
         self._last_status = None
         self._paused_titles: set[str] = set()
+        # Até quando a pílula deve continuar visível (monotonic).
+        self._visible_until = 0.0
 
     # --- helpers ---------------------------------------------------------
     @property
@@ -72,10 +65,8 @@ class App:
     def tick(self) -> bool:
         if self.state.roll_day():
             log.info("Novo dia, contador zerado.")
-            self._warned = self._blocked_notified = False
+            self._warned = False
             self._paused_titles.clear()
-            if self.block:
-                self.block.hide()
 
         players = self.youtube_players()
         playing = [p for p in players if p.is_playing]
@@ -103,17 +94,29 @@ class App:
             log.info("%s  %s / %s", status, fmt(self.state.seconds), fmt(self.limit_seconds))
             self._last_status = status
 
-        if self.overlay:
-            if players or self.config.always_show_overlay or self.over_limit:
-                self.overlay.update(self.state.seconds, self.limit_seconds, status)
-            else:
-                self.overlay.hide()
+        self._update_overlay(playing, status)
 
         self._ticks_since_save += 1
         if self._ticks_since_save >= self.SAVE_EVERY:
             self._ticks_since_save = 0
             self.state.save()
         return True
+
+    def _update_overlay(self, playing: list[Player], status: str) -> None:
+        """Pílula visível só enquanto toca, mais `hide_after_seconds` depois de parar.
+        Com o limite estourado, cada tentativa de play mostra o aviso pelo mesmo tempo."""
+        if not self.overlay:
+            return
+        now = time.monotonic()
+        if playing:
+            self._visible_until = now + self.config.hide_after_seconds
+        if now >= self._visible_until:
+            self.overlay.hide()
+            return
+        if self.over_limit:
+            self.overlay.show_message("⛔ Tempo esgotado, volte amanhã", "blocked")
+        else:
+            self.overlay.update(self.state.seconds, self.limit_seconds, status)
 
     def _maybe_warn(self) -> None:
         left = self.limit_seconds - self.state.seconds
@@ -128,7 +131,6 @@ class App:
             f"{self.config.limit_minutes} min usados. Volta amanhã.",
             urgency="critical",
         )
-        self._blocked_notified = True
         self._enforce(playing)
 
     def _enforce(self, playing: list[Player]) -> None:
@@ -137,11 +139,6 @@ class App:
             if p.title not in self._paused_titles:
                 log.info("Pausado: %s", p.title)
                 self._paused_titles.add(p.title)
-        if self.block and playing:
-            self.block.show_blocked(self.state.seconds, self.limit_seconds, until_midnight())
-        elif self.block and not self.block.dismissed and not self.block.get_visible():
-            # Primeira vez que estoura: mostra mesmo sem player tocando.
-            self.block.show_blocked(self.state.seconds, self.limit_seconds, until_midnight())
 
     def run(self) -> None:
         loop = GLib.MainLoop()

@@ -34,8 +34,8 @@ Pausou, contagem para. Fechou a aba, contagem para. Está tocando, cada segundo 
 | | |
 |---|---|
 | 🎯 **Conta só reprodução real** | Usa o estado `Playing`/`Paused` que o navegador publica via MPRIS |
-| 👀 **Contador na tela** | Pílula sempre-no-topo: verde tocando, 🟡 nos últimos 5 min, 🔴 bloqueado |
-| ⛔ **Bloqueio de verdade** | Ao bater o limite, pausa o vídeo via D-Bus e mostra uma tela de aviso. Deu play de novo? Pausa no segundo seguinte |
+| 👀 **Contador na tela** | Pílula sempre-no-topo que aparece só enquanto o vídeo toca: verde tocando, 🟡 nos últimos 5 min. Some 2 s depois de pausar |
+| ⛔ **Bloqueio de verdade** | Ao bater o limite, pausa o vídeo via D-Bus. Deu play de novo? Pausa no segundo seguinte e mostra *Tempo esgotado, volte amanhã* |
 | 🔔 **Avisos** | Notificação quando faltam 5 min e quando o limite estoura |
 | 🌙 **Zera à meia-noite** | Cada dia começa do zero |
 | 📊 **Relatório por vídeo** | `yt-limit --status` mostra onde o tempo foi |
@@ -114,12 +114,14 @@ systemctl --user restart yt-limit
 
 ### Estados do contador
 
+A pílula só aparece enquanto um vídeo do YouTube está tocando e some 2 segundos
+depois que ele para. Fora isso, a tela fica limpa.
+
 | Ícone | Cor | Significado |
 |:---:|:---:|---|
-| `⏸` | cinza | Nenhum vídeo do YouTube tocando |
 | `▶` | verde | Tocando, contando |
 | `▶` | amarelo | Tocando, faltam 5 min ou menos |
-| `⛔` | vermelho | Limite atingido, player pausado |
+| `⛔` | vermelho | *Tempo esgotado, volte amanhã*: aparece 2 s a cada tentativa de play |
 
 ## ⚙️ Configuração
 
@@ -128,7 +130,7 @@ Arquivo: `~/.config/yt-limit/config.json`
 ```json
 {
   "limit_minutes": 30,
-  "always_show_overlay": true,
+  "hide_after_seconds": 2,
   "warn_minutes_left": 5
 }
 ```
@@ -136,7 +138,7 @@ Arquivo: `~/.config/yt-limit/config.json`
 | Chave | Padrão | Descrição |
 |---|:---:|---|
 | `limit_minutes` | `30` | Limite diário em minutos |
-| `always_show_overlay` | `true` | `false` esconde a pílula quando não há player do YouTube aberto |
+| `hide_after_seconds` | `2` | Segundos que a pílula continua na tela depois que o vídeo para |
 | `warn_minutes_left` | `5` | Minutos restantes para a notificação de aviso |
 
 Estado do dia (contagem e tempo por vídeo): `~/.local/share/yt-limit/state.json`
@@ -148,7 +150,7 @@ yt_limit/
 ├── __main__.py   CLI (--status, --limit, --reset, ...)
 ├── app.py        loop de 1 s: consulta, soma, avisa, bloqueia
 ├── mpris.py      leitura dos players via D-Bus e detecção de YouTube
-├── overlay.py    pílula sempre-no-topo e tela de bloqueio (GTK 3)
+├── overlay.py    pílula sempre-no-topo (GTK 3)
 └── store.py      config e estado diário em JSON
 install.sh        serviço systemd de usuário
 uninstall.sh
@@ -156,7 +158,7 @@ uninstall.sh
 
 ## ⚠️ Limitações conhecidas
 
-- **Tela cheia** cobre o contador. A contagem e o bloqueio continuam; só a pílula some.
+- **Tela cheia** cobre o contador. A contagem e o bloqueio continuam; só a pílula fica escondida.
 - **Chrome** não expõe a URL da página no MPRIS; a detecção usa a capa (`i.ytimg.com`).
   Vídeos normais funcionam; Shorts sem capa podem escapar.
 - **YouTube Music** também conta, pois usa o mesmo domínio de capas.

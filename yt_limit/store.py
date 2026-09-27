@@ -23,8 +23,8 @@ def fmt(seconds: int) -> str:
 @dataclass
 class Config:
     limit_minutes: int = 30
-    # Mostrar o contador mesmo sem nenhum player do YouTube aberto.
-    always_show_overlay: bool = True
+    # Quantos segundos a pílula continua na tela depois que o vídeo para.
+    hide_after_seconds: int = 2
     # Avisar quando faltarem N minutos.
     warn_minutes_left: int = 5
 
