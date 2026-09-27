@@ -83,9 +83,11 @@ class Overlay(Gtk.Window):
     def _place(self) -> None:
         display = Gdk.Display.get_default()
         monitor = display.get_primary_monitor() or display.get_monitor(0)
-        geo = monitor.get_geometry()
+        # A área de trabalho desconta a barra superior e o dock do GNOME;
+        # a geometria crua colocaria a pílula atrás da barra.
+        area = monitor.get_workarea()
         width, _ = self.get_size()
-        self.move(geo.x + geo.width - width - self.MARGIN, geo.y + self.MARGIN)
+        self.move(area.x + area.width - width - self.MARGIN, area.y + self.MARGIN)
 
     def update(self, used: int, limit: int, state: str) -> None:
         icon = {"playing": "▶", "warning": "▶", "blocked": "⛔", "idle": "⏸"}[state]
