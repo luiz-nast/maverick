@@ -141,7 +141,13 @@ class App:
                 self._paused_titles.add(p.title)
 
     def run(self) -> None:
+        import signal
+
         loop = GLib.MainLoop()
+        # Shutdown/restart mandam SIGTERM; sem isso o Python morre sem passar
+        # pelo `finally` e perde os últimos segundos não salvos.
+        for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            GLib.unix_signal_add(GLib.PRIORITY_HIGH, sig, lambda *_: (loop.quit(), False)[1])
         log.info(
             "yt-limit iniciado. Hoje: %s / %s",
             fmt(self.state.seconds),
@@ -153,3 +159,4 @@ class App:
             loop.run()
         finally:
             self.state.save()
+            log.info("Encerrando. Estado salvo: %s / %s", fmt(self.state.seconds), fmt(self.limit_seconds))
