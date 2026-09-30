@@ -45,6 +45,17 @@ class Player:
     def is_playing(self) -> bool:
         return self.status == "Playing"
 
+    @property
+    def is_browser(self) -> bool:
+        n = self.bus_name.lower()
+        return any(b in n for b in ("firefox", "chrom", "brave", "vivaldi", "opera", "edge"))
+
+    @property
+    def metadata_hidden(self) -> bool:
+        """Navegador tocando sem URL nem capa: é o que acontece em janela privada
+        (Firefox mostra só "O Firefox está reproduzindo mídia")."""
+        return self.is_browser and not self.url and not self.art_url
+
 
 class Mpris:
     def __init__(self) -> None:

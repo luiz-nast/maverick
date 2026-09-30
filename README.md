@@ -1,173 +1,154 @@
-<div align="center">
+# yt-limit
 
-# ⏱️ yt-limit
+Daily YouTube time limiter for Linux desktops. Runs as a user-level background service. Counts only seconds during which a YouTube video is actually playing, as reported by the browser over MPRIS (D-Bus). When the daily limit is reached it pauses the player through D-Bus and shows a short on-screen notice on every play attempt. Resets at local midnight.
 
-**Limite diário de YouTube para Linux, como aplicativo de sistema.**<br>
-Conta só o tempo em que um vídeo está *de fato tocando*. Aba aberta não gasta nada.
+- Language: Python 3.10+. No pip dependencies. Uses system PyGObject (GTK 3, Gio, GLib).
+- Tested: Ubuntu 26.04, GNOME 50 on Wayland, Firefox 156 (snap). Should work on any Linux session with a D-Bus session bus.
+- Repository: https://github.com/luiz-nast/yt-limit
+- License: MIT
 
-[![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20GNOME%20%7C%20KDE-333?logo=linux&logoColor=white)](#requisitos)
-[![Deps](https://img.shields.io/badge/pip%20deps-zero-success)](#requisitos)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+## Behavior
 
-```
-                                             ┌────────────────────┐
-                                             │ ▶ 12:34 / 30:00    │   ← canto superior direito
-                                             └────────────────────┘
-```
+| Situation | Counted | On-screen pill |
+|---|---|---|
+| YouTube tab open, video paused | no | hidden |
+| YouTube video playing, tab visible or in background | yes, 1 s per second | visible: `▶ MM:SS / MM:SS` |
+| Video stops or is paused | no | stays 2 s, then hides |
+| Playing, 5 min or less left | yes | visible, yellow |
+| Limit reached, user presses play | no; player is paused within 1 s | `⛔ Tempo esgotado, volte amanhã` for 2 s |
+| Other site playing media (Pinterest, Spotify Web, etc.) | no | hidden |
+| YouTube in a private/incognito window | yes (see Detection layers) | as above |
+| Two YouTube tabs playing in the same Firefox process | counted once (Firefox exposes one player per process) | as above |
+| Reboot, logout, service restart | state persists; only a date change resets the counter | — |
 
-</div>
+Notifications (via `notify-send`): one when `warn_minutes_left` minutes remain, one when the limit is reached.
 
----
+## Detection layers
 
-## 💡 Por quê
+Every second the app lists `org.mpris.MediaPlayer2.*` names on the session bus and reads `PlaybackStatus` and `Metadata` from each. A player counts as YouTube if any layer says yes:
 
-Extensões de navegador contam o tempo com a aba aberta. Resultado: você deixa um vídeo
-pausado em segundo plano, esquece, e seus preciosos 30 minutos evaporam sem você assistir
-nada.
+1. **MPRIS metadata.** `xesam:url` (Firefox) or `mpris:artUrl` (Chrome) matches `youtube.com`, `youtu.be`, `youtube-nocookie.com`, `ytimg.com` or `googlevideo.com`. Exact.
+2. **Accessibility tree (AT-SPI).** Used only when the player belongs to a browser and has no URL and no art URL, which is what Firefox and Chrome do in private/incognito windows (Firefox reports the title as "O Firefox está reproduzindo mídia"). The app walks the browser's AT-SPI tree and looks for a document whose name ends with `- YouTube` or whose `DocURL` contains `youtube.com`. Exact, but requires the browser to be registered on the accessibility bus. On GNOME that requires `toolkit-accessibility` to be enabled before the browser starts:
 
-O `yt-limit` roda **fora do navegador** e pergunta ao próprio player se o vídeo está tocando.
-Pausou, contagem para. Fechou a aba, contagem para. Está tocando, cada segundo conta.
+   ```bash
+   gsettings set org.gnome.desktop.interface toolkit-accessibility true
+   ```
 
-## ✨ O que ele faz
+   then close and reopen the browser. Results are cached for 5 s.
+3. **Fallback.** If the browser is not on the accessibility bus, a browser player with hidden metadata is counted as YouTube when `count_private_media` is `true` (default). This can overcount media from other sites played in a private window. Set `count_private_media` to `false` to never count hidden-metadata media.
 
-| | |
-|---|---|
-| 🎯 **Conta só reprodução real** | Usa o estado `Playing`/`Paused` que o navegador publica via MPRIS |
-| 👀 **Contador na tela** | Pílula sempre-no-topo que aparece só enquanto o vídeo toca: verde tocando, 🟡 nos últimos 5 min. Some 2 s depois de pausar |
-| ⛔ **Bloqueio de verdade** | Ao bater o limite, pausa o vídeo via D-Bus. Deu play de novo? Pausa no segundo seguinte e mostra *Tempo esgotado, volte amanhã* |
-| 🔔 **Avisos** | Notificação quando faltam 5 min e quando o limite estoura |
-| 🌙 **Zera à meia-noite** | Cada dia começa do zero |
-| 📊 **Relatório por vídeo** | `yt-limit --status` mostra onde o tempo foi |
-| 🚀 **Sobe com a sessão** | Instala como serviço systemd de usuário |
+Run `yt-limit --check` to see which layer applies right now.
 
-## 🔍 Como funciona
+## Install
 
-```mermaid
-flowchart LR
-    FF[Firefox / Chrome] -- "MPRIS via D-Bus<br/>PlaybackStatus + URL" --> D[yt-limit<br/>1 consulta/s]
-    D -- "Playing + youtube.com" --> C[+1 segundo]
-    C --> O[Contador na tela]
-    C -- "≥ limite" --> P[Pause via D-Bus<br/>+ tela de bloqueio]
-```
-
-Firefox e Chrome/Chromium expõem a mídia de cada página como um player
-[MPRIS](https://specifications.freedesktop.org/mpris-spec/latest/) no D-Bus da sessão.
-O `yt-limit` lê isso uma vez por segundo e só soma tempo quando **as duas** condições valem:
-
-1. `PlaybackStatus == Playing`
-2. a URL da página (Firefox) ou a capa do vídeo (Chrome) é do YouTube
-
-Nada de injetar script em página, nada de extensão, nada de olhar título de janela.
-
-## 📦 Requisitos
-
-- Linux com D-Bus de sessão. Testado no **Ubuntu 26.04 + GNOME Wayland**; deve funcionar em KDE e outros.
-- Python 3.10+ com PyGObject e GTK 3:
-
-  ```bash
-  sudo apt install python3-gi gir1.2-gtk-3.0
-  ```
-
-- Firefox ou Chrome/Chromium. No Firefox o MPRIS já vem ligado por padrão.
-
-> **Zero dependências pip.** O app usa só a biblioteca padrão e os bindings GTK do sistema,
-> por isso roda direto no `python3` do sistema, sem venv.
-
-## 🚀 Instalação
+Requirements: `python3-gi` and `gir1.2-gtk-3.0` (Debian/Ubuntu package names), `notify-send` optional.
 
 ```bash
+sudo apt install python3-gi gir1.2-gtk-3.0
 git clone https://github.com/luiz-nast/yt-limit.git ~/yt-limit
 cd ~/yt-limit
 ./install.sh
 ```
 
-O instalador:
+`install.sh` does the following:
 
-- copia o pacote para `~/.local/lib/yt-limit`
-- cria o comando `~/.local/bin/yt-limit`
-- registra e inicia o serviço `yt-limit.service` do systemd de usuário
+- copies `yt_limit/` to `~/.local/lib/yt-limit/`
+- writes the wrapper `~/.local/bin/yt-limit`
+- writes `~/.config/systemd/user/yt-limit.service` with `GDK_BACKEND=x11`
+- runs `systemctl --user enable --now yt-limit.service`
 
-Pronto. O contador aparece no canto da tela e o serviço sobe sozinho a cada login.
+Re-run `./install.sh` after pulling updates, then `systemctl --user restart yt-limit`.
 
-```bash
-systemctl --user status yt-limit      # está rodando?
-journalctl --user -u yt-limit -f      # logs ao vivo
-./uninstall.sh                        # remove tudo (config e estado ficam)
+`./uninstall.sh` stops and disables the service and removes the copied files. It keeps config and state.
+
+Do not start the daemon from a process confined by AppArmor (for example from inside another snap): the Firefox snap rejects D-Bus calls from confined peers with `Access denied`. The systemd user service and a normal terminal are unconfined.
+
+## CLI
+
+```
+yt-limit                 run the daemon in the foreground
+yt-limit --status        print today's total and the top 10 videos by seconds
+yt-limit --check         print MPRIS players, their classification and accessibility-bus status
+yt-limit --limit N       set the daily limit to N minutes and exit (restart the service to apply)
+yt-limit --reset         set today's counter to zero and exit
+yt-limit --debug         run in the foreground and log every player every second
+yt-limit --no-overlay    run without any window (count and pause only)
 ```
 
-## 🎮 Uso
+Service management:
 
 ```bash
-yt-limit --status        # tempo de hoje + top 10 vídeos
-yt-limit --limit 45      # muda o limite diário (minutos)
-yt-limit --reset         # zera o contador de hoje
-yt-limit --debug         # roda em primeiro plano logando cada player detectado
-yt-limit --no-overlay    # só conta e pausa, sem janelas
-```
-
-Depois de mudar o limite, reinicie o serviço:
-
-```bash
+systemctl --user status yt-limit
 systemctl --user restart yt-limit
+journalctl --user -u yt-limit -f
 ```
 
-### Estados do contador
+## Configuration
 
-A pílula só aparece enquanto um vídeo do YouTube está tocando e some 2 segundos
-depois que ele para. Fora isso, a tela fica limpa.
-
-| Ícone | Cor | Significado |
-|:---:|:---:|---|
-| `▶` | verde | Tocando, contando |
-| `▶` | amarelo | Tocando, faltam 5 min ou menos |
-| `⛔` | vermelho | *Tempo esgotado, volte amanhã*: aparece 2 s a cada tentativa de play |
-
-## ⚙️ Configuração
-
-Arquivo: `~/.config/yt-limit/config.json`
+File: `~/.config/yt-limit/config.json`. Created on first `--limit`. Missing keys use defaults.
 
 ```json
 {
   "limit_minutes": 30,
   "hide_after_seconds": 2,
-  "warn_minutes_left": 5
+  "warn_minutes_left": 5,
+  "count_private_media": true
 }
 ```
 
-| Chave | Padrão | Descrição |
-|---|:---:|---|
-| `limit_minutes` | `30` | Limite diário em minutos |
-| `hide_after_seconds` | `2` | Segundos que a pílula continua na tela depois que o vídeo para |
-| `warn_minutes_left` | `5` | Minutos restantes para a notificação de aviso |
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `limit_minutes` | int | 30 | Daily limit in minutes |
+| `hide_after_seconds` | int | 2 | How long the pill stays visible after playback stops, and how long the "time's up" notice shows |
+| `warn_minutes_left` | int | 5 | Remaining minutes at which the warning notification fires and the pill turns yellow |
+| `count_private_media` | bool | true | Count hidden-metadata browser media as YouTube when the accessibility tree cannot confirm |
 
-Estado do dia (contagem e tempo por vídeo): `~/.local/share/yt-limit/state.json`
+State file: `~/.local/share/yt-limit/state.json`. Written every 5 s while running and on SIGTERM/SIGINT/SIGHUP.
 
-## 🗂️ Estrutura
+```json
+{
+  "day": "2026-09-30",
+  "seconds": 1800,
+  "per_video": { "<xesam:title>": 1046 }
+}
+```
+
+`day` is the local date. On start and on every tick the app compares it with today; a mismatch resets `seconds` and `per_video`.
+
+## Files
 
 ```
-yt_limit/
-├── __main__.py   CLI (--status, --limit, --reset, ...)
-├── app.py        loop de 1 s: consulta, soma, avisa, bloqueia
-├── mpris.py      leitura dos players via D-Bus e detecção de YouTube
-├── overlay.py    pílula sempre-no-topo (GTK 3)
-└── store.py      config e estado diário em JSON
-install.sh        serviço systemd de usuário
+yt_limit/__main__.py   argument parsing, --status, --check, --limit, --reset
+yt_limit/app.py        1 s tick: classify players, add time, warn, pause, drive the overlay
+yt_limit/mpris.py      list MPRIS players, read PlaybackStatus/Metadata, Pause()
+yt_limit/a11y.py       AT-SPI walk to find YouTube documents in browsers
+yt_limit/overlay.py    GTK 3 always-on-top pill (forces GDK_BACKEND=x11)
+yt_limit/store.py      Config and State dataclasses, JSON persistence, fmt()
+install.sh             user service installer
 uninstall.sh
 ```
 
-## ⚠️ Limitações conhecidas
+## Overlay details
 
-- **Tela cheia** cobre o contador. A contagem e o bloqueio continuam; só a pílula fica escondida.
-- **Chrome** não expõe a URL da página no MPRIS; a detecção usa a capa (`i.ytimg.com`).
-  Vídeos normais funcionam; Shorts sem capa podem escapar.
-- **YouTube Music** também conta, pois usa o mesmo domínio de capas.
-- **GNOME Wayland** não permite "sempre no topo" para janelas nativas; o app força
-  `GDK_BACKEND=x11` (XWayland), que o Mutter respeita.
-- Se o daemon for iniciado por um processo confinado por AppArmor (dentro de outro snap,
-  por exemplo), o Firefox snap responde *Access denied*. Rode pelo terminal ou pelo serviço
-  systemd, que é o caminho normal.
+- GTK 3 undecorated window, type hint DOCK, keep-above, sticky, no focus, skip taskbar.
+- GNOME on Wayland ignores keep-above for native Wayland windows, so `overlay.py` sets `GDK_BACKEND=x11` and runs through XWayland, where Mutter honors `_NET_WM_STATE_ABOVE`.
+- Positioned at the top-right of the primary monitor's work area (excludes the GNOME top bar and dock), 12 px margin.
+- Fullscreen windows cover the pill. Counting and pausing continue.
 
-## 📄 Licença
+## Known limitations
 
-[MIT](LICENSE)
+- Chrome/Chromium does not publish the page URL over MPRIS; detection there relies on the thumbnail host `i.ytimg.com`. Shorts without artwork may be missed (layer 2 or 3 may still catch them).
+- YouTube Music is counted: same domains, same artwork host.
+- YouTube ads are counted while they play; the browser reports them as playing media with the ad's title.
+- Layer 2 has been implemented against the AT-SPI protocol and tested for connectivity and traversal on GNOME Shell, but not yet against a live Firefox with accessibility enabled.
+- Only media the browser exposes as a media session is seen. A browser with MPRIS disabled (Firefox `media.hardwaremediakeys.enabled = false`) is invisible to the app.
+
+## Troubleshooting
+
+| Symptom | Check |
+|---|---|
+| Pill never appears | `yt-limit --check` shows a `Playing` YouTube player? If not, the browser is not exposing MPRIS. |
+| Private window not counted | `yt-limit --check`: player shown as `privado/sem metadados`? Then layer 3 applies unless `count_private_media` is false. Enable `toolkit-accessibility` for layer 2. |
+| `Access denied` in logs | Daemon started from an AppArmor-confined process. Use the systemd service. |
+| Pill hidden behind the top bar | Fixed in 5b5d087; run `./install.sh` and restart the service. |
+| Counter did not reset | It resets on local date change only. Check `day` in `state.json`. |

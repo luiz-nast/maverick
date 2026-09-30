@@ -27,6 +27,9 @@ class Config:
     hide_after_seconds: int = 2
     # Avisar quando faltarem N minutos.
     warn_minutes_left: int = 5
+    # Janela privada esconde título e URL no MPRIS. Se a árvore de acessibilidade
+    # não puder confirmar, contar essa mídia como YouTube mesmo assim.
+    count_private_media: bool = True
 
     @classmethod
     def load(cls) -> "Config":

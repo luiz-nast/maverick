@@ -10,6 +10,7 @@ import time
 
 from gi.repository import GLib
 
+from .a11y import A11y
 from .mpris import Mpris, Player
 from .store import Config, State, fmt
 
@@ -32,7 +33,9 @@ class App:
         self.config = Config.load()
         self.state = State.load()
         self.mpris = Mpris()
+        self.a11y = A11y()
         self.debug = debug
+        self._private_fallback_logged = False
         self.overlay = None
         if show_overlay:
             from .overlay import Overlay  # GTK só quando há janela
@@ -54,9 +57,26 @@ class App:
     def over_limit(self) -> bool:
         return self.state.seconds >= self.limit_seconds
 
+    def is_youtube(self, p: Player) -> bool:
+        """Camadas: URL/capa do MPRIS; senão, árvore de acessibilidade; senão, fallback."""
+        if p.is_youtube:
+            return True
+        if not p.metadata_hidden:
+            return False
+        verdict = self.a11y.browser_has_youtube()
+        if verdict is not None:
+            return verdict
+        if self.config.count_private_media and not self._private_fallback_logged:
+            self._private_fallback_logged = True
+            log.info(
+                "Mídia em janela privada sem metadados e navegador fora do barramento "
+                "de acessibilidade: contando como YouTube (count_private_media=true)."
+            )
+        return self.config.count_private_media
+
     def youtube_players(self) -> list[Player]:
         try:
-            return [p for p in self.mpris.players() if p.is_youtube]
+            return [p for p in self.mpris.players() if self.is_youtube(p)]
         except GLib.Error as e:
             log.warning("D-Bus indisponível: %s", e)
             return []
