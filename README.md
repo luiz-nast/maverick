@@ -1,154 +1,253 @@
-# yt-limit
+# Maverick
 
-Daily YouTube time limiter for Linux desktops. Runs as a user-level background service. Counts only seconds during which a YouTube video is actually playing, as reported by the browser over MPRIS (D-Bus). When the daily limit is reached it pauses the player through D-Bus and shows a short on-screen notice on every play attempt. Resets at local midnight.
+Maverick is a Linux desktop app with two jobs:
 
-- Language: Python 3.10+. No pip dependencies. Uses system PyGObject (GTK 3, Gio, GLib).
-- Tested: Ubuntu 26.04, GNOME 50 on Wayland, Firefox 156 (snap). Should work on any Linux session with a D-Bus session bus.
-- Repository: https://github.com/luiz-nast/yt-limit
-- License: MIT
+1. **YouTube daily limit.** Counts only the seconds during which a YouTube video is actually playing, as reported by the browser over MPRIS (D-Bus). A paused video or an idle tab costs nothing. At the limit (30 min by default) it pauses the player and shows "Tempo esgotado, volte amanhã" on every play attempt. Resets at local midnight.
+2. **Browser-game site blocking.** Blocks a list of game sites system-wide through `/etc/hosts` plus Firefox and Chrome enterprise policies. Ships with the 10 largest browser-game portals in Brazil and worldwide.
 
-## Behavior
+| | |
+|---|---|
+| Version | 0.2.0 |
+| Language | Python 3.10+, no pip dependencies |
+| UI | GTK 4 + libadwaita (window), GTK 3 (on-screen counter) |
+| Tested on | Ubuntu 26.04, GNOME 50 (Wayland), Firefox 156 (snap) |
+| Package | `.deb`, architecture `all` |
+| App ID | `io.github.luiz_nast.Maverick` |
+| License | MIT |
+| Repository | https://github.com/luiz-nast/maverick |
+| Former name | `yt-limit` (data is migrated automatically, old GitHub URL redirects) |
 
-| Situation | Counted | On-screen pill |
+![Maverick window](docs/screenshot.png)
+
+## Components
+
+| Component | Command / file | Runs as | Purpose |
+|---|---|---|---|
+| Daemon | `maverick daemon`, systemd user unit `maverick.service` | user | Polls MPRIS every second, counts time, pauses at the limit, drives the counter, checks the site block every 60 s |
+| Window | `maverick` (menu entry "Maverick") | user | Today's usage ring, limit setting, most watched videos, blocked-site list with Apply button |
+| Counter | part of the daemon | user | Always-on-top pill `▶ MM:SS / MM:SS` at the top-right, visible only while a video plays |
+| Block helper | `/usr/lib/maverick/maverick-blockctl` | root via `pkexec` | Writes `/etc/hosts` and browser policies. Validates every domain |
+
+The window and the daemon share two JSON files. The window writes the config; the daemon reloads it on change, so a new limit applies immediately.
+
+## YouTube counting
+
+| Situation | Counted | Counter on screen |
 |---|---|---|
 | YouTube tab open, video paused | no | hidden |
-| YouTube video playing, tab visible or in background | yes, 1 s per second | visible: `▶ MM:SS / MM:SS` |
-| Video stops or is paused | no | stays 2 s, then hides |
-| Playing, 5 min or less left | yes | visible, yellow |
-| Limit reached, user presses play | no; player is paused within 1 s | `⛔ Tempo esgotado, volte amanhã` for 2 s |
-| Other site playing media (Pinterest, Spotify Web, etc.) | no | hidden |
-| YouTube in a private/incognito window | yes (see Detection layers) | as above |
-| Two YouTube tabs playing in the same Firefox process | counted once (Firefox exposes one player per process) | as above |
-| Reboot, logout, service restart | state persists; only a date change resets the counter | — |
+| Video playing, tab visible or in background | yes, 1 s per second | `▶ MM:SS / MM:SS`, green |
+| Video stops | no | stays 2 s, then hides |
+| 5 min or less left | yes | yellow |
+| Limit reached, play pressed | no; player paused within 1 s | `⛔ Tempo esgotado, volte amanhã` for 2 s |
+| Other site playing media (Pinterest, Spotify Web) in a normal window | no | hidden |
+| YouTube in a private window | yes, see detection layers | as above |
+| Two YouTube tabs in the same Firefox process | counted once | as above |
+| Reboot, logout, service restart | state persists; only a date change resets it | — |
 
-Notifications (via `notify-send`): one when `warn_minutes_left` minutes remain, one when the limit is reached.
+Notifications: one at `warn_minutes_left`, one when the limit is reached.
 
-## Detection layers
+### Detection layers
 
-Every second the app lists `org.mpris.MediaPlayer2.*` names on the session bus and reads `PlaybackStatus` and `Metadata` from each. A player counts as YouTube if any layer says yes:
+Every second the daemon lists `org.mpris.MediaPlayer2.*` on the session bus and reads `PlaybackStatus` and `Metadata`. A playing player counts as YouTube if the first applicable layer says so:
 
 1. **MPRIS metadata.** `xesam:url` (Firefox) or `mpris:artUrl` (Chrome) matches `youtube.com`, `youtu.be`, `youtube-nocookie.com`, `ytimg.com` or `googlevideo.com`. Exact.
-2. **Accessibility tree (AT-SPI).** Used only when the player belongs to a browser and has no URL and no art URL, which is what Firefox and Chrome do in private/incognito windows (Firefox reports the title as "O Firefox está reproduzindo mídia"). The app walks the browser's AT-SPI tree and looks for a document whose name ends with `- YouTube` or whose `DocURL` contains `youtube.com`. Exact, but requires the browser to be registered on the accessibility bus. On GNOME that requires `toolkit-accessibility` to be enabled before the browser starts:
+2. **Accessibility tree (AT-SPI).** Used only for a browser player with no URL and no art URL, which is how Firefox and Chrome report media in private windows (Firefox sets the title to "O Firefox está reproduzindo mídia"). Looks for a document named `... - YouTube` or with a `DocURL` on `youtube.com`. Exact, but the browser must be on the accessibility bus. On GNOME that needs `gsettings set org.gnome.desktop.interface toolkit-accessibility true` and a browser restart. Cached 5 s.
+3. **Fallback.** If the browser is not on the accessibility bus, private-window media counts as YouTube when `count_private_media` is `true` (default). Any media played in a private window is then counted and, after the limit, paused.
 
-   ```bash
-   gsettings set org.gnome.desktop.interface toolkit-accessibility true
-   ```
+`maverick check` prints which layer applies right now.
 
-   then close and reopen the browser. Results are cached for 5 s.
-3. **Fallback.** If the browser is not on the accessibility bus, a browser player with hidden metadata is counted as YouTube when `count_private_media` is `true` (default). This can overcount media from other sites played in a private window. Set `count_private_media` to `false` to never count hidden-metadata media.
+## Site blocking
 
-Run `yt-limit --check` to see which layer applies right now.
+### Default list
+
+| Site | Domains |
+|---|---|
+| Click Jogos | `clickjogos.com.br` |
+| Friv | `friv.com` |
+| Poki | `poki.com`, `poki.com.br` |
+| CrazyGames | `crazygames.com`, `crazygames.com.br` |
+| Jogos 360 | `jogos360.com.br` |
+| 1001 Jogos | `1001jogos.com.br` |
+| Y8 | `y8.com` |
+| Miniclip | `miniclip.com` |
+| Coolmath Games | `coolmathgames.com` |
+| Kizi | `kizi.com` |
+
+The list lives in `blocked_sites` in the config and can be edited in the window or with `maverick block add|remove`. Input is normalized: `https://www.Poki.com/jogo` becomes `poki.com`.
+
+### Mechanism
+
+| Layer | File | What is written | Covers | Takes effect |
+|---|---|---|---|---|
+| hosts | `/etc/hosts` | Managed block between `# >>> maverick` and `# <<< maverick <<<`; each domain plus `www.` and `m.` mapped to `0.0.0.0` and `::` | Every browser and program using the system resolver. Firefox honors it even with DNS over HTTPS (`network.trr.exclude-etc-hosts` defaults to true) | New connections after the DNS cache expires (resolved cache is flushed on apply; Firefox caches up to 60 s) |
+| Firefox | `/etc/firefox/policies/policies.json` | `WebsiteFilter.Block` entries `*://*.<domain>/*`, merged with any existing policies | All subdomains, Firefox block page | After Firefox restarts. The Firefox snap reads `/etc/firefox` through its `etc-firefox` plug |
+| Chrome / Chromium | `/etc/opt/chrome/policies/managed/maverick.json`, `/etc/chromium/policies/managed/maverick.json` | `{"URLBlocklist": [domains]}` | All subdomains | After browser restart |
+
+### Lifecycle
+
+- Package install: applies the current list from `/etc/hosts`, or the default list on a fresh system.
+- Package upgrade: re-applies the current list.
+- `apt remove maverick`: removes all three layers.
+- Changes: window button **Aplicar** or `maverick block apply`. Both call `pkexec maverick-blockctl apply <domains>`; polkit action `io.github.luiz_nast.Maverick.block`, `auth_admin_keep`.
+- Removing a site in the window asks for confirmation.
+- The daemon checks `/etc/hosts` every 60 s and sends a critical notification once if a listed domain is missing.
+
+### Limits of blocking
+
+- A tab already open on a blocked site keeps working until it reloads.
+- Mirror and clone domains (e.g. `friv5online.com`) are not covered unless added.
+- Anyone with sudo can undo it. The goal is friction, not lockdown.
 
 ## Install
 
-Requirements: `python3-gi` and `gir1.2-gtk-3.0` (Debian/Ubuntu package names), `notify-send` optional.
+### Option A: system package (includes site blocking)
+
+From the release:
 
 ```bash
-sudo apt install python3-gi gir1.2-gtk-3.0
-git clone https://github.com/luiz-nast/yt-limit.git ~/yt-limit
-cd ~/yt-limit
-./install.sh
+wget https://github.com/luiz-nast/maverick/releases/download/v0.2.0/maverick_0.2.0_all.deb
+sudo apt install ./maverick_0.2.0_all.deb
+systemctl --user daemon-reload
+systemctl --user enable --now maverick.service
 ```
 
-`install.sh` does the following:
+From source (builds the `.deb`, removes a user-only install if present, installs, starts the daemon):
 
-- copies `yt_limit/` to `~/.local/lib/yt-limit/`
-- writes the wrapper `~/.local/bin/yt-limit`
-- writes `~/.config/systemd/user/yt-limit.service` with `GDK_BACKEND=x11`
-- runs `systemctl --user enable --now yt-limit.service`
+```bash
+git clone https://github.com/luiz-nast/maverick.git ~/maverick
+~/maverick/packaging/install-system.sh
+```
 
-Re-run `./install.sh` after pulling updates, then `systemctl --user restart yt-limit`.
+Installed paths:
 
-`./uninstall.sh` stops and disables the service and removes the copied files. It keeps config and state.
+| Path | Content |
+|---|---|
+| `/usr/bin/maverick` | launcher |
+| `/usr/lib/maverick/maverick/` | Python package |
+| `/usr/lib/maverick/maverick-blockctl` | root helper |
+| `/usr/lib/systemd/user/maverick.service` | daemon unit, enabled globally on install |
+| `/usr/share/applications/io.github.luiz_nast.Maverick.desktop` | menu entry |
+| `/usr/share/icons/hicolor/scalable/apps/io.github.luiz_nast.Maverick.svg` | icon |
+| `/usr/share/polkit-1/actions/io.github.luiz_nast.Maverick.policy` | polkit action |
 
-Do not start the daemon from a process confined by AppArmor (for example from inside another snap): the Firefox snap rejects D-Bus calls from confined peers with `Access denied`. The systemd user service and a normal terminal are unconfined.
+Dependencies: `python3`, `python3-gi`, `gir1.2-gtk-3.0`, `gir1.2-gtk-4.0`, `gir1.2-adw-1 (>= 1.5)`, `libnotify-bin`, `pkexec`.
+
+Uninstall: `sudo apt remove maverick`.
+
+### Option B: user only (no root, no site blocking)
+
+```bash
+git clone https://github.com/luiz-nast/maverick.git ~/maverick
+~/maverick/install.sh
+```
+
+Installs to `~/.local/lib/maverick`, `~/.local/bin/maverick`, `~/.config/systemd/user/maverick.service`, plus menu entry and icon under `~/.local/share`. Remove with `./uninstall.sh`. Do not keep Option A and B at the same time; `install-system.sh` removes B first.
+
+Do not start the daemon from an AppArmor-confined process (for example from inside a snap): the Firefox snap answers its D-Bus calls with `Access denied`. The systemd user service and a normal terminal are unconfined.
 
 ## CLI
 
 ```
-yt-limit                 run the daemon in the foreground
-yt-limit --status        print today's total and the top 10 videos by seconds
-yt-limit --check         print MPRIS players, their classification and accessibility-bus status
-yt-limit --limit N       set the daily limit to N minutes and exit (restart the service to apply)
-yt-limit --reset         set today's counter to zero and exit
-yt-limit --debug         run in the foreground and log every player every second
-yt-limit --no-overlay    run without any window (count and pause only)
+maverick                     open the window
+maverick daemon [--debug] [--no-overlay]
+                             run the counter in the foreground (the service runs this)
+maverick status              today's total and top 10 videos
+maverick check               MPRIS players, their classification, accessibility bus, block status
+maverick limit N             set the daily limit to N minutes (applies immediately)
+maverick reset               zero today's counter
+maverick block list          blocked sites and whether each is applied
+maverick block add D...      add domains to the list
+maverick block remove D...   remove domains from the list
+maverick block apply         apply the list to the system (admin password)
+maverick --version
 ```
 
-Service management:
+Service:
 
 ```bash
-systemctl --user status yt-limit
-systemctl --user restart yt-limit
-journalctl --user -u yt-limit -f
+systemctl --user status maverick
+journalctl --user -u maverick -f
 ```
 
 ## Configuration
 
-File: `~/.config/yt-limit/config.json`. Created on first `--limit`. Missing keys use defaults.
+`~/.config/maverick/config.json`. Missing keys use defaults. Reloaded by the daemon on change.
 
 ```json
 {
   "limit_minutes": 30,
   "hide_after_seconds": 2,
   "warn_minutes_left": 5,
-  "count_private_media": true
+  "count_private_media": true,
+  "blocked_sites": ["clickjogos.com.br", "friv.com", "poki.com", "..."]
 }
 ```
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `limit_minutes` | int | 30 | Daily limit in minutes |
-| `hide_after_seconds` | int | 2 | How long the pill stays visible after playback stops, and how long the "time's up" notice shows |
-| `warn_minutes_left` | int | 5 | Remaining minutes at which the warning notification fires and the pill turns yellow |
+| `limit_minutes` | int | 30 | Daily YouTube limit |
+| `hide_after_seconds` | int | 2 | Counter stays visible this long after playback stops; also the duration of the "time's up" notice |
+| `warn_minutes_left` | int | 5 | Remaining minutes for the warning notification and yellow counter |
 | `count_private_media` | bool | true | Count hidden-metadata browser media as YouTube when the accessibility tree cannot confirm |
+| `blocked_sites` | list of domains | the 12 default domains | Sites to block; applied to the system only via Apply / `maverick block apply` |
 
-State file: `~/.local/share/yt-limit/state.json`. Written every 5 s while running and on SIGTERM/SIGINT/SIGHUP.
+State: `~/.local/share/maverick/state.json`, written on every counted second and on SIGTERM/SIGINT/SIGHUP.
 
 ```json
-{
-  "day": "2026-09-30",
-  "seconds": 1800,
-  "per_video": { "<xesam:title>": 1046 }
-}
+{ "day": "2026-10-04", "seconds": 1134, "per_video": { "<xesam:title>": 512 } }
 ```
 
-`day` is the local date. On start and on every tick the app compares it with today; a mismatch resets `seconds` and `per_video`.
+A `day` different from today's local date resets `seconds` and `per_video`.
 
-## Files
+## Repository layout
 
 ```
-yt_limit/__main__.py   argument parsing, --status, --check, --limit, --reset
-yt_limit/app.py        1 s tick: classify players, add time, warn, pause, drive the overlay
-yt_limit/mpris.py      list MPRIS players, read PlaybackStatus/Metadata, Pause()
-yt_limit/a11y.py       AT-SPI walk to find YouTube documents in browsers
-yt_limit/overlay.py    GTK 3 always-on-top pill (forces GDK_BACKEND=x11)
-yt_limit/store.py      Config and State dataclasses, JSON persistence, fmt()
-install.sh             user service installer
-uninstall.sh
+maverick/__main__.py    CLI and subcommands
+maverick/app.py         daemon loop: classify players, count, warn, pause, overlay, block watch
+maverick/mpris.py       MPRIS players over D-Bus, Pause()
+maverick/a11y.py        AT-SPI walk for YouTube documents in private windows
+maverick/overlay.py     GTK 3 always-on-top counter (forces GDK_BACKEND=x11)
+maverick/gui.py         GTK 4 + libadwaita window
+maverick/blocking.py    default site list, domain validation, hosts/policy rendering, status
+maverick/blockctl.py    root helper: writes /etc/hosts and browser policies atomically
+maverick/store.py       config and state JSON, migration from yt-limit
+data/                   icon, .desktop, polkit policy, systemd unit, helper launcher
+packaging/build-deb.sh  builds dist/maverick_<version>_all.deb
+packaging/install-system.sh
+install.sh, uninstall.sh  user-only install
+tests/                  unittest suite
 ```
 
-## Overlay details
+## Development
 
-- GTK 3 undecorated window, type hint DOCK, keep-above, sticky, no focus, skip taskbar.
-- GNOME on Wayland ignores keep-above for native Wayland windows, so `overlay.py` sets `GDK_BACKEND=x11` and runs through XWayland, where Mutter honors `_NET_WM_STATE_ABOVE`.
-- Positioned at the top-right of the primary monitor's work area (excludes the GNOME top bar and dock), 12 px margin.
-- Fullscreen windows cover the pill. Counting and pausing continue.
+```bash
+python3 -m maverick                         # window from source
+python3 -m maverick daemon --debug          # daemon from source
+python3 -m unittest discover -s tests -t .  # tests
+packaging/build-deb.sh                      # build the package
+```
+
+## Counter window details
+
+- GTK 3, undecorated, type hint DOCK, keep-above, sticky, no focus, not in the taskbar.
+- GNOME on Wayland ignores keep-above for native Wayland windows, so the counter runs through XWayland (`GDK_BACKEND=x11`), where Mutter honors `_NET_WM_STATE_ABOVE`.
+- Placed at the top-right of the primary monitor's work area, below the top bar.
+- Fullscreen video covers it; counting and pausing continue.
 
 ## Known limitations
 
-- Chrome/Chromium does not publish the page URL over MPRIS; detection there relies on the thumbnail host `i.ytimg.com`. Shorts without artwork may be missed (layer 2 or 3 may still catch them).
-- YouTube Music is counted: same domains, same artwork host.
-- YouTube ads are counted while they play; the browser reports them as playing media with the ad's title.
-- Layer 2 has been implemented against the AT-SPI protocol and tested for connectivity and traversal on GNOME Shell, but not yet against a live Firefox with accessibility enabled.
-- Only media the browser exposes as a media session is seen. A browser with MPRIS disabled (Firefox `media.hardwaremediakeys.enabled = false`) is invisible to the app.
+- Chrome does not publish the page URL over MPRIS; detection relies on the `i.ytimg.com` thumbnail. Shorts without artwork may fall to layer 2 or 3.
+- YouTube Music and YouTube ads are counted.
+- Layer 2 is tested for bus connectivity and tree traversal on GNOME Shell, not yet against a live Firefox with accessibility enabled.
+- A browser with MPRIS disabled (Firefox `media.hardwaremediakeys.enabled = false`) is invisible to the daemon.
 
 ## Troubleshooting
 
 | Symptom | Check |
 |---|---|
-| Pill never appears | `yt-limit --check` shows a `Playing` YouTube player? If not, the browser is not exposing MPRIS. |
-| Private window not counted | `yt-limit --check`: player shown as `privado/sem metadados`? Then layer 3 applies unless `count_private_media` is false. Enable `toolkit-accessibility` for layer 2. |
-| `Access denied` in logs | Daemon started from an AppArmor-confined process. Use the systemd service. |
-| Pill hidden behind the top bar | Fixed in 5b5d087; run `./install.sh` and restart the service. |
-| Counter did not reset | It resets on local date change only. Check `day` in `state.json`. |
+| Counter never appears | `maverick check` lists a `Playing` YouTube player? If not, the browser is not exposing MPRIS. |
+| Private window not counted | `maverick check` shows `privado/sem metadados`? Then layer 3 applies unless `count_private_media` is false. |
+| Other media paused in a private window after the limit | Layer 3 fallback. Enable `toolkit-accessibility` for exact detection or set `count_private_media` to false. |
+| Blocked site still opens | Tab opened before the block: reload. Firefox block page: restart Firefox. `maverick block list` shows `✗`: click Apply. |
+| "Bloqueio no sistema indisponível" | Option B install. Use Option A. |
+| `Access denied` in logs | Daemon started from a confined process. Use the systemd service. |

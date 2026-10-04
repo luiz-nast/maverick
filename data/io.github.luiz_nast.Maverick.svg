@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1f2a44"/>
+      <stop offset="1" stop-color="#0b1020"/>
+    </linearGradient>
+    <linearGradient id="arc" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffb020"/>
+      <stop offset="1" stop-color="#ff3b30"/>
+    </linearGradient>
+    <linearGradient id="jet" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#cfd8e6"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="112" height="112" rx="26" fill="url(#bg)"/>
+  <rect x="8.5" y="8.5" width="111" height="111" rx="25.5" fill="none" stroke="#ffffff" stroke-opacity="0.08"/>
+  <!-- trilho e progresso (3/4) -->
+  <circle cx="64" cy="64" r="38" fill="none" stroke="#ffffff" stroke-opacity="0.10" stroke-width="9"/>
+  <path d="M64 26 A38 38 0 1 1 26 64" fill="none" stroke="url(#arc)" stroke-width="9" stroke-linecap="round"/>
+  <!-- caça -->
+  <path fill="url(#jet)" d="M64 33 C66 36 67 40 67.4 45 L67.8 53 L88 73 L88 77.5 L68 73 L67.6 79 L76 86 L76 89.5 L64 86.5 L52 89.5 L52 86 L60.4 79 L60 73 L40 77.5 L40 73 L60.2 53 L60.6 45 C61 40 62 36 64 33 Z"/>
+</svg>

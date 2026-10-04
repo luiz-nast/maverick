@@ -1,5 +1,6 @@
-"""Loop principal: a cada segundo consulta o MPRIS, soma tempo se houver vídeo
-do YouTube tocando, atualiza o contador e bloqueia ao atingir o limite."""
+"""Daemon: a cada segundo consulta o MPRIS, soma tempo se houver vídeo do YouTube
+tocando, atualiza o contador e pausa ao atingir o limite. Também vigia se o
+bloqueio de sites continua aplicado."""
 
 from __future__ import annotations
 
@@ -10,27 +11,30 @@ import time
 
 from gi.repository import GLib
 
+from . import blocking
 from .a11y import A11y
 from .mpris import Mpris, Player
-from .store import Config, State, fmt
+from .store import APP_ID, APP_NAME, CONFIG_FILE, Config, State, fmt
 
-log = logging.getLogger("yt-limit")
+log = logging.getLogger("maverick")
 
 
 def notify(summary: str, body: str = "", urgency: str = "normal") -> None:
     if shutil.which("notify-send"):
         subprocess.Popen(
-            ["notify-send", "-a", "yt-limit", "-u", urgency, summary, body],
+            ["notify-send", "-a", APP_NAME, "-i", APP_ID, "-u", urgency, summary, body],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
 
 
 class App:
-    SAVE_EVERY = 5  # segundos
+    SAVE_EVERY = 5  # segundos, quando nada mudou
+    BLOCK_CHECK_EVERY = 60  # segundos
 
     def __init__(self, show_overlay: bool = True, debug: bool = False) -> None:
         self.config = Config.load()
+        self._config_mtime = self._mtime()
         self.state = State.load()
         self.mpris = Mpris()
         self.a11y = A11y()
@@ -47,8 +51,29 @@ class App:
         self._paused_titles: set[str] = set()
         # Até quando a pílula deve continuar visível (monotonic).
         self._visible_until = 0.0
+        self._dirty = False
+        self._block_ticks = self.BLOCK_CHECK_EVERY  # checa no primeiro tick
+        self._block_warned = False
 
     # --- helpers ---------------------------------------------------------
+    @staticmethod
+    def _mtime() -> float:
+        try:
+            return CONFIG_FILE.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    def _reload_config_if_changed(self) -> None:
+        """A janela grava a config; o daemon aplica sem precisar reiniciar."""
+        mtime = self._mtime()
+        if mtime != self._config_mtime:
+            self._config_mtime = mtime
+            old_limit = self.config.limit_minutes
+            self.config = Config.load()
+            if self.config.limit_minutes != old_limit:
+                log.info("Limite alterado: %d -> %d min", old_limit, self.config.limit_minutes)
+                self._warned = False
+
     @property
     def limit_seconds(self) -> int:
         return self.config.limit_minutes * 60
@@ -83,10 +108,12 @@ class App:
 
     # --- loop ------------------------------------------------------------
     def tick(self) -> bool:
+        self._reload_config_if_changed()
         if self.state.roll_day():
             log.info("Novo dia, contador zerado.")
             self._warned = False
             self._paused_titles.clear()
+            self._dirty = True
 
         players = self.youtube_players()
         playing = [p for p in players if p.is_playing]
@@ -101,6 +128,7 @@ class App:
             # Um segundo tocando. Firefox expõe um player por processo, então
             # duas abas tocando ao mesmo tempo contam uma vez só, o que é o certo.
             self.state.add_second(playing[0].title)
+            self._dirty = True
             self._maybe_warn()
             if self.over_limit:
                 self._on_limit_reached(playing)
@@ -116,11 +144,37 @@ class App:
 
         self._update_overlay(playing, status)
 
+        # Grava a cada segundo contado (a janela lê o arquivo ao vivo) e, parado,
+        # no máximo a cada SAVE_EVERY segundos.
         self._ticks_since_save += 1
-        if self._ticks_since_save >= self.SAVE_EVERY:
+        if self._dirty or self._ticks_since_save >= self.SAVE_EVERY:
+            if self._dirty:
+                self.state.save()
+            self._dirty = False
             self._ticks_since_save = 0
-            self.state.save()
+
+        self._block_ticks += 1
+        if self._block_ticks >= self.BLOCK_CHECK_EVERY:
+            self._block_ticks = 0
+            self._check_block()
         return True
+
+    def _check_block(self) -> None:
+        """Avisa uma vez se o bloqueio de sites foi removido ou está desatualizado."""
+        st = blocking.status()
+        if not st.helper_installed:
+            return
+        missing = st.missing(self.config.blocked_sites)
+        if missing and not self._block_warned:
+            self._block_warned = True
+            log.warning("Bloqueio de sites incompleto: %s", ", ".join(missing))
+            notify(
+                "Bloqueio de sites desativado",
+                f"{len(missing)} site(s) fora do bloqueio. Abra o Maverick e clique em Aplicar.",
+                urgency="critical",
+            )
+        elif not missing:
+            self._block_warned = False
 
     def _update_overlay(self, playing: list[Player], status: str) -> None:
         """Pílula visível só enquanto toca, mais `hide_after_seconds` depois de parar.
@@ -169,7 +223,7 @@ class App:
         for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
             GLib.unix_signal_add(GLib.PRIORITY_HIGH, sig, lambda *_: (loop.quit(), False)[1])
         log.info(
-            "yt-limit iniciado. Hoje: %s / %s",
+            "Maverick iniciado. Hoje: %s / %s",
             fmt(self.state.seconds),
             fmt(self.limit_seconds),
         )

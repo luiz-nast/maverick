@@ -1,23 +1,47 @@
-"""Persistência: config em ~/.config/yt-limit, estado diário em ~/.local/share/yt-limit."""
+"""Persistência: config em ~/.config/maverick, estado diário em ~/.local/share/maverick."""
 
 from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import date
 from pathlib import Path
 
-CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "yt-limit"
-DATA_DIR = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "yt-limit"
+from .blocking import default_domains, normalize_domain
+
+APP_ID = "io.github.luiz_nast.Maverick"
+APP_NAME = "Maverick"
+
+_CONFIG_HOME = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+_DATA_HOME = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+CONFIG_DIR = _CONFIG_HOME / "maverick"
+DATA_DIR = _DATA_HOME / "maverick"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 STATE_FILE = DATA_DIR / "state.json"
+
+# Nome antigo do projeto. Os dados são movidos uma única vez.
+_LEGACY_DIRS = ((_CONFIG_HOME / "yt-limit", CONFIG_DIR), (_DATA_HOME / "yt-limit", DATA_DIR))
+
+
+def migrate_legacy() -> None:
+    for old, new in _LEGACY_DIRS:
+        if old.is_dir() and not new.exists():
+            new.parent.mkdir(parents=True, exist_ok=True)
+            old.rename(new)
 
 
 def fmt(seconds: int) -> str:
     """Formata segundos como MM:SS."""
     seconds = max(0, int(seconds))
     return f"{seconds // 60:02d}:{seconds % 60:02d}"
+
+
+def _write_json(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+    os.replace(tmp, path)
 
 
 @dataclass
@@ -30,18 +54,21 @@ class Config:
     # Janela privada esconde título e URL no MPRIS. Se a árvore de acessibilidade
     # não puder confirmar, contar essa mídia como YouTube mesmo assim.
     count_private_media: bool = True
+    # Domínios bloqueados no sistema (aplicados via maverick-blockctl).
+    blocked_sites: list[str] = field(default_factory=default_domains)
 
     @classmethod
     def load(cls) -> "Config":
         try:
             data = json.loads(CONFIG_FILE.read_text())
-            return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+            cfg = cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
         except (OSError, ValueError, TypeError):
-            return cls()
+            cfg = cls()
+        cfg.blocked_sites = list(dict.fromkeys(d for d in map(normalize_domain, cfg.blocked_sites) if d))
+        return cfg
 
     def save(self) -> None:
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        CONFIG_FILE.write_text(json.dumps(asdict(self), indent=2))
+        _write_json(CONFIG_FILE, asdict(self))
 
 
 @dataclass
@@ -78,8 +105,8 @@ class State:
         if title:
             self.per_video[title] = self.per_video.get(title, 0) + 1
 
+    def top(self, n: int = 10) -> list[tuple[str, int]]:
+        return sorted((self.per_video or {}).items(), key=lambda kv: -kv[1])[:n]
+
     def save(self) -> None:
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        tmp = STATE_FILE.with_suffix(".tmp")
-        tmp.write_text(json.dumps(asdict(self), indent=2, ensure_ascii=False))
-        os.replace(tmp, STATE_FILE)
+        _write_json(STATE_FILE, asdict(self))

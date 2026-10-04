@@ -1,19 +1,25 @@
 [project]
-name = "yt-limit"
-version = "0.1.0"
-description = "Limite diário de YouTube para Linux: conta só o tempo com vídeo tocando (via MPRIS) e mostra um contador na tela."
+name = "maverick"
+dynamic = ["version"]
+description = "Limite diário de YouTube que conta só o tempo com vídeo tocando (MPRIS), com contador na tela e bloqueio de sites de jogos."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
-# Depende do PyGObject do sistema (python3-gi + GTK3); não há dependências pip.
+# Usa PyGObject/GTK do sistema (python3-gi, GTK 3, GTK 4, libadwaita); sem dependências pip.
 dependencies = []
 
+[project.urls]
+Homepage = "https://github.com/luiz-nast/maverick"
+
 [project.scripts]
-yt-limit = "yt_limit.__main__:main"
+maverick = "maverick.__main__:main"
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools.dynamic]
+version = { attr = "maverick.__version__" }
+
 [tool.setuptools.packages.find]
-include = ["yt_limit*"]
+include = ["maverick*"]

@@ -49,7 +49,7 @@ class Overlay(Gtk.Window):
     def __init__(self) -> None:
         super().__init__(type=Gtk.WindowType.TOPLEVEL)
         _install_css()
-        self.set_title("yt-limit")
+        self.set_title("Maverick")
         self.set_decorated(False)
         self.set_resizable(False)
         self.set_keep_above(True)

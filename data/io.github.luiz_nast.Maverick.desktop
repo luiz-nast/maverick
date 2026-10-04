@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Maverick
+GenericName=Limite de YouTube e bloqueio de jogos
+Comment=Conta o tempo real assistindo YouTube e bloqueia sites de jogos
+Exec=maverick
+Icon=io.github.luiz_nast.Maverick
+Terminal=false
+Categories=Utility;GTK;
+Keywords=youtube;limite;foco;tempo;bloqueio;jogos;focus;limit;
+StartupNotify=true
+StartupWMClass=maverick

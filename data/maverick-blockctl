@@ -1,0 +1,8 @@
+#!/usr/bin/python3 -I
+# Helper root do Maverick. Chamado via pkexec; ver maverick/blockctl.py.
+import sys
+
+sys.path.insert(0, "/usr/lib/maverick")
+from maverick.blockctl import main  # noqa: E402
+
+sys.exit(main())
