@@ -68,15 +68,18 @@ class App:
         mtime = self._mtime()
         if mtime != self._config_mtime:
             self._config_mtime = mtime
-            old_limit = self.config.limit_minutes
+            old_today, old_target = self.config.effective_limit(), self.config.limit_minutes
             self.config = Config.load()
-            if self.config.limit_minutes != old_limit:
-                log.info("Limite alterado: %d -> %d min", old_limit, self.config.limit_minutes)
+            new_today = self.config.effective_limit()
+            if new_today != old_today:
+                log.info("Limite de hoje: %d -> %d min", old_today, new_today)
                 self._warned = False
+            if self.config.limit_minutes != old_target and self.config.limit_minutes > new_today:
+                log.info("Limite de %d min agendado para amanhã", self.config.limit_minutes)
 
     @property
     def limit_seconds(self) -> int:
-        return self.config.limit_minutes * 60
+        return self.config.effective_limit() * 60
 
     @property
     def over_limit(self) -> bool:
@@ -202,7 +205,7 @@ class App:
         self.state.save()
         notify(
             "YouTube: limite de hoje atingido",
-            f"{self.config.limit_minutes} min usados. Volta amanhã.",
+            f"{self.config.effective_limit()} min usados. Volta amanhã.",
             urgency="critical",
         )
         self._enforce(playing)

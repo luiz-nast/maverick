@@ -167,9 +167,10 @@ class Window(Adw.ApplicationWindow):
         )
         self.limit_row = Adw.SpinRow.new_with_range(5, 240, 5)
         self.limit_row.set_title("Limite diário")
-        self.limit_row.set_subtitle("minutos por dia")
         self.limit_row.set_value(self.config.limit_minutes)
         self.limit_row.connect("notify::value", self._on_limit_changed)
+        self._limit_timer = 0
+        self._update_limit_subtitle()
         group.add(self.limit_row)
 
         self.service_row = Adw.ActionRow(title="Contador em segundo plano")
@@ -199,7 +200,7 @@ class Window(Adw.ApplicationWindow):
     def refresh_usage(self) -> bool:
         state = State.load()
         used = state.seconds
-        limit = self.config.limit_minutes * 60
+        limit = self.config.effective_limit() * 60
         now = GLib.get_monotonic_time() // 1_000_000
         if self._last_seconds is not None and used > self._last_seconds:
             self._playing_until = now + 2
@@ -291,13 +292,35 @@ class Window(Adw.ApplicationWindow):
             self.sites_group.add(row)
 
     # --- ações -------------------------------------------------------------
-    def _on_limit_changed(self, row: Adw.SpinRow, _pspec) -> None:
-        minutes = int(row.get_value())
+    def _update_limit_subtitle(self) -> None:
+        today, target = self.config.effective_limit(), self.config.limit_minutes
+        if target != today:
+            self.limit_row.set_subtitle(f"Hoje: {today} min · a partir de amanhã: {target} min")
+        else:
+            self.limit_row.set_subtitle("Reduzir vale na hora; aumentar só a partir de amanhã")
+
+    def _on_limit_changed(self, _row: Adw.SpinRow, _pspec) -> None:
+        # Espera parar de clicar: passar por um valor menor no caminho não deve
+        # baixar o limite de hoje sem querer.
+        if self._limit_timer:
+            GLib.source_remove(self._limit_timer)
+        self._limit_timer = GLib.timeout_add(1500, self._commit_limit)
+
+    def _commit_limit(self) -> bool:
+        self._limit_timer = 0
+        minutes = int(self.limit_row.get_value())
+        self.config = Config.load()
         if minutes != self.config.limit_minutes:
-            self.config = Config.load()
-            self.config.limit_minutes = minutes
+            now = self.config.set_limit(minutes)
             self.config.save()
-            self.refresh_usage()
+            if now:
+                msg = f"Limite de hoje reduzido para {minutes} min"
+            else:
+                msg = f"{minutes} min a partir de amanhã. Hoje continua {self.config.effective_limit()} min."
+            self.toasts.add_toast(Adw.Toast(title=msg, timeout=4))
+        self._update_limit_subtitle()
+        self.refresh_usage()
+        return False
 
     def _on_start_service(self, _btn) -> None:
         subprocess.run(["systemctl", "--user", "enable", "--now", "maverick.service"])

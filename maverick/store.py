@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import asdict, dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from .blocking import default_domains, normalize_domain
@@ -44,9 +44,17 @@ def _write_json(path: Path, data: dict) -> None:
     os.replace(tmp, path)
 
 
+def today_iso() -> str:
+    return date.today().isoformat()
+
+
 @dataclass
 class Config:
+    # Limite que vale a partir de amanhã (e hoje, se não houver teto do dia).
     limit_minutes: int = 30
+    # Teto do dia: {"day": "AAAA-MM-DD", "minutes": N}. Aumentos não mexem nele,
+    # então só valem no dia seguinte; reduções o baixam na hora.
+    today_cap: dict | None = None
     # Quantos segundos a pílula continua na tela depois que o vídeo para.
     hide_after_seconds: int = 2
     # Avisar quando faltarem N minutos.
@@ -70,6 +78,27 @@ class Config:
     def save(self) -> None:
         _write_json(CONFIG_FILE, asdict(self))
 
+    def effective_limit(self, today: str | None = None) -> int:
+        """Limite em minutos que vale hoje."""
+        today = today or today_iso()
+        cap = self.today_cap or {}
+        if cap.get("day") == today and isinstance(cap.get("minutes"), int):
+            return min(self.limit_minutes, cap["minutes"])
+        return self.limit_minutes
+
+    def set_limit(self, minutes: int, today: str | None = None) -> bool:
+        """Define o limite. Reduzir vale na hora; aumentar só amanhã.
+        Retorna True se a mudança já vale hoje."""
+        today = today or today_iso()
+        current = self.effective_limit(today)
+        self.today_cap = {"day": today, "minutes": min(current, minutes)}
+        self.limit_minutes = minutes
+        return minutes <= current
+
+    @staticmethod
+    def tomorrow(today: str | None = None) -> str:
+        return (date.fromisoformat(today or today_iso()) + timedelta(days=1)).isoformat()
+
 
 @dataclass
 class State:
@@ -90,7 +119,7 @@ class State:
 
     def roll_day(self) -> bool:
         """Zera o contador se o dia mudou. Retorna True se zerou."""
-        today = date.today().isoformat()
+        today = today_iso()
         if self.day != today:
             self.day = today
             self.seconds = 0

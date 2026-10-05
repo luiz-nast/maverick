@@ -117,7 +117,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "status":
         cfg, state = Config.load(), State.load()
-        print(f"Hoje ({state.day}): {fmt(state.seconds)} de {fmt(cfg.limit_minutes * 60)}")
+        print(f"Hoje ({state.day}): {fmt(state.seconds)} de {fmt(cfg.effective_limit() * 60)}")
+        if cfg.limit_minutes != cfg.effective_limit():
+            print(f"A partir de amanhã: {cfg.limit_minutes} min")
         for title, secs in state.top(10):
             print(f"  {fmt(secs)}  {title}")
         return 0
@@ -129,9 +131,12 @@ def main(argv: list[str] | None = None) -> int:
         if args.minutes <= 0:
             parser.error("o limite precisa ser maior que zero")
         cfg = Config.load()
-        cfg.limit_minutes = args.minutes
+        now = cfg.set_limit(args.minutes)
         cfg.save()
-        print(f"Limite diário: {args.minutes} min (aplicado na hora).")
+        if now:
+            print(f"Limite diário: {args.minutes} min, já vale hoje.")
+        else:
+            print(f"Limite diário: {args.minutes} min a partir de amanhã. Hoje continua {cfg.effective_limit()} min.")
         return 0
 
     if args.cmd == "reset":

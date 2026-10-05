@@ -118,3 +118,29 @@ class BlockctlApplyTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LimitRuleTest(unittest.TestCase):
+    def test_raise_waits_until_tomorrow(self):
+        from maverick.store import Config
+        c = Config(limit_minutes=30)
+        self.assertFalse(c.set_limit(60, "2026-10-05"))
+        self.assertEqual(c.effective_limit("2026-10-05"), 30)
+        self.assertEqual(c.effective_limit("2026-10-06"), 60)
+
+    def test_lower_applies_now_and_sticks_today(self):
+        from maverick.store import Config
+        c = Config(limit_minutes=30)
+        self.assertTrue(c.set_limit(20, "2026-10-05"))
+        self.assertEqual(c.effective_limit("2026-10-05"), 20)
+        self.assertFalse(c.set_limit(30, "2026-10-05"))
+        self.assertEqual(c.effective_limit("2026-10-05"), 20)
+        self.assertEqual(c.effective_limit("2026-10-06"), 30)
+
+    def test_raise_then_lower_below_today(self):
+        from maverick.store import Config
+        c = Config(limit_minutes=30)
+        c.set_limit(90, "2026-10-05")
+        self.assertTrue(c.set_limit(25, "2026-10-05"))
+        self.assertEqual(c.effective_limit("2026-10-05"), 25)
+        self.assertEqual(c.effective_limit("2026-10-06"), 25)

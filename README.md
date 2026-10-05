@@ -2,12 +2,12 @@
 
 Maverick is a Linux desktop app with two jobs:
 
-1. **YouTube daily limit.** Counts only the seconds during which a YouTube video is actually playing, as reported by the browser over MPRIS (D-Bus). A paused video or an idle tab costs nothing. At the limit (30 min by default) it pauses the player and shows "Tempo esgotado, volte amanhã" on every play attempt. Resets at local midnight.
+1. **YouTube daily limit.** Counts only the seconds during which a YouTube video is actually playing, as reported by the browser over MPRIS (D-Bus). A paused video or an idle tab costs nothing. At the limit (30 min by default) it pauses the player and shows "Tempo esgotado, volte amanhã" on every play attempt. Resets at local midnight. Raising the limit only takes effect the next day; lowering it takes effect immediately.
 2. **Browser-game site blocking.** Blocks a list of game sites system-wide through `/etc/hosts` plus Firefox and Chrome enterprise policies. Ships with the 10 largest browser-game portals in Brazil and worldwide.
 
 | | |
 |---|---|
-| Version | 0.2.0 |
+| Version | 0.3.0 |
 | Language | Python 3.10+, no pip dependencies |
 | UI | GTK 4 + libadwaita (window), GTK 3 (on-screen counter) |
 | Tested on | Ubuntu 26.04, GNOME 50 (Wayland), Firefox 156 (snap) |
@@ -45,6 +45,19 @@ The window and the daemon share two JSON files. The window writes the config; th
 | Reboot, logout, service restart | state persists; only a date change resets it | — |
 
 Notifications: one at `warn_minutes_left`, one when the limit is reached.
+
+### Limit changes
+
+Today's limit can only go down. This removes the option of extending the current day once the time runs out.
+
+| Action | Today | From tomorrow |
+|---|---|---|
+| Raise 30 → 45 | stays 30 | 45 |
+| Lower 30 → 20 | 20 immediately | 20 |
+| Lower 30 → 20, then raise to 30 the same day | stays 20 | 30 |
+| Raise 30 → 90, then lower to 25 the same day | 25 immediately | 25 |
+
+Implementation: `limit_minutes` holds the target limit; `today_cap` holds `{day, minutes}`, the ceiling for that date. Today's limit is `min(limit_minutes, today_cap.minutes)` when `today_cap.day` is today, otherwise `limit_minutes`. Every change sets `today_cap.minutes` to `min(current, new)`. The window waits 1.5 s after the last click before saving, so stepping through lower values on the way does not lower today's limit.
 
 ### Detection layers
 
@@ -105,8 +118,8 @@ The list lives in `blocked_sites` in the config and can be edited in the window 
 From the release:
 
 ```bash
-wget https://github.com/luiz-nast/maverick/releases/download/v0.2.0/maverick_0.2.0_all.deb
-sudo apt install ./maverick_0.2.0_all.deb
+wget https://github.com/luiz-nast/maverick/releases/download/v0.3.0/maverick_0.3.0_all.deb
+sudo apt install ./maverick_0.3.0_all.deb
 systemctl --user daemon-reload
 systemctl --user enable --now maverick.service
 ```
@@ -153,7 +166,7 @@ maverick daemon [--debug] [--no-overlay]
                              run the counter in the foreground (the service runs this)
 maverick status              today's total and top 10 videos
 maverick check               MPRIS players, their classification, accessibility bus, block status
-maverick limit N             set the daily limit to N minutes (applies immediately)
+maverick limit N             set the daily limit; lowering applies now, raising from tomorrow
 maverick reset               zero today's counter
 maverick block list          blocked sites and whether each is applied
 maverick block add D...      add domains to the list
@@ -171,11 +184,12 @@ journalctl --user -u maverick -f
 
 ## Configuration
 
-`~/.config/maverick/config.json`. Missing keys use defaults. Reloaded by the daemon on change.
+`~/.config/maverick/config.json`. Missing keys use defaults. Reloaded by the daemon on change. Editing the file by hand bypasses the limit rule.
 
 ```json
 {
   "limit_minutes": 30,
+  "today_cap": { "day": "2026-10-05", "minutes": 30 },
   "hide_after_seconds": 2,
   "warn_minutes_left": 5,
   "count_private_media": true,
@@ -185,7 +199,8 @@ journalctl --user -u maverick -f
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `limit_minutes` | int | 30 | Daily YouTube limit |
+| `limit_minutes` | int | 30 | Daily YouTube limit from tomorrow on (and today when there is no cap for today) |
+| `today_cap` | object or null | null | `{day, minutes}`: ceiling for that date, written on every limit change |
 | `hide_after_seconds` | int | 2 | Counter stays visible this long after playback stops; also the duration of the "time's up" notice |
 | `warn_minutes_left` | int | 5 | Remaining minutes for the warning notification and yellow counter |
 | `count_private_media` | bool | true | Count hidden-metadata browser media as YouTube when the accessibility tree cannot confirm |
@@ -250,4 +265,5 @@ packaging/build-deb.sh                      # build the package
 | Other media paused in a private window after the limit | Layer 3 fallback. Enable `toolkit-accessibility` for exact detection or set `count_private_media` to false. |
 | Blocked site still opens | Tab opened before the block: reload. Firefox block page: restart Firefox. `maverick block list` shows `✗`: click Apply. |
 | "Bloqueio no sistema indisponível" | Option B install. Use Option A. |
+| Raised the limit, today's did not change | By design: raises apply from tomorrow. `maverick status` shows both values. |
 | `Access denied` in logs | Daemon started from a confined process. Use the systemd service. |
