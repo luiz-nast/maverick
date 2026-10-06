@@ -8,6 +8,7 @@ DEB=$("$ROOT/packaging/build-deb.sh")
 "$ROOT/uninstall.sh" --quiet || true
 sudo apt install -y "$DEB"
 systemctl --user daemon-reload
-systemctl --user enable --now maverick.service
+systemctl --user enable maverick.service
+systemctl --user restart maverick.service
 echo
 echo "Maverick instalado. Abra pelo menu de aplicativos ou rode: maverick"
