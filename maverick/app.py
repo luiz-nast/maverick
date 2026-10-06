@@ -14,7 +14,7 @@ from gi.repository import GLib
 from . import blocking
 from .a11y import A11y
 from .mpris import Mpris, Player
-from .store import APP_ID, APP_NAME, CONFIG_FILE, Config, State, fmt
+from .store import APP_ID, APP_NAME, CONFIG_FILE, STATE_FILE, Config, State, fmt
 
 log = logging.getLogger("maverick")
 
@@ -36,6 +36,7 @@ class App:
         self.config = Config.load()
         self._config_mtime = self._mtime()
         self.state = State.load()
+        self._state_mtime = self._state_file_mtime()
         self.mpris = Mpris()
         self.a11y = A11y()
         self.debug = debug
@@ -62,6 +63,27 @@ class App:
             return CONFIG_FILE.stat().st_mtime
         except OSError:
             return 0.0
+
+    @staticmethod
+    def _state_file_mtime() -> float:
+        try:
+            return STATE_FILE.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    def _save_state(self) -> None:
+        self.state.save()
+        self._state_mtime = self._state_file_mtime()
+
+    def _reload_state_if_changed(self) -> None:
+        """`maverick reset` (ou outro processo) gravou o estado: recarrega do disco,
+        senão o próximo segundo contado sobrescreveria a mudança."""
+        mtime = self._state_file_mtime()
+        if mtime != self._state_mtime:
+            self._state_mtime = mtime
+            self.state = State.load()
+            self._warned = False
+            log.info("Estado alterado fora do daemon; recarregado: %s", fmt(self.state.seconds))
 
     def _reload_config_if_changed(self) -> None:
         """A janela grava a config; o daemon aplica sem precisar reiniciar."""
@@ -112,6 +134,7 @@ class App:
     # --- loop ------------------------------------------------------------
     def tick(self) -> bool:
         self._reload_config_if_changed()
+        self._reload_state_if_changed()
         if self.state.roll_day():
             log.info("Novo dia, contador zerado.")
             self._warned = False
@@ -152,7 +175,7 @@ class App:
         self._ticks_since_save += 1
         if self._dirty or self._ticks_since_save >= self.SAVE_EVERY:
             if self._dirty:
-                self.state.save()
+                self._save_state()
             self._dirty = False
             self._ticks_since_save = 0
 
@@ -202,7 +225,7 @@ class App:
             notify("YouTube: quase no limite", f"Faltam {fmt(left)} para hoje.")
 
     def _on_limit_reached(self, playing: list[Player]) -> None:
-        self.state.save()
+        self._save_state()
         notify(
             "YouTube: limite de hoje atingido",
             f"{self.config.effective_limit()} min usados. Volta amanhã.",
@@ -235,5 +258,5 @@ class App:
         try:
             loop.run()
         finally:
-            self.state.save()
+            self._save_state()
             log.info("Encerrando. Estado salvo: %s / %s", fmt(self.state.seconds), fmt(self.limit_seconds))

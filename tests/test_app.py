@@ -58,6 +58,7 @@ class DaemonTest(unittest.TestCase):
         a.config.limit_minutes, a.config.hide_after_seconds = limit, 2
         a.state.seconds, a.state.per_video = 0, {}
         a._check_block = lambda: None
+        a._state_mtime = a._state_file_mtime()
         return a
 
     def test_counts_only_playing_youtube(self):
@@ -108,6 +109,20 @@ class DaemonTest(unittest.TestCase):
         a.a11y = FakeA11y(False)
         a.config.count_private_media = True
         self.assertFalse(a.is_youtube(priv))
+
+    def test_external_reset_is_not_overwritten(self):
+        a = self.make(limit=30)
+        a.mpris.status = "Playing"
+        for _ in range(5):
+            a.tick()
+        self.assertEqual(a.state.seconds, 5)
+        st = appmod.State.load()
+        st.seconds, st.per_video = 0, {}
+        st.save()
+        os.utime(appmod.STATE_FILE, (time.time() + 5, time.time() + 5))
+        a.tick()
+        self.assertEqual(a.state.seconds, 1)
+        self.assertEqual(appmod.State.load().seconds, 1)
 
     def test_config_hot_reload(self):
         a = self.make(limit=30)

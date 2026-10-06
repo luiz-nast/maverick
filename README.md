@@ -7,7 +7,7 @@ Maverick is a Linux desktop app with two jobs:
 
 | | |
 |---|---|
-| Version | 0.4.0 |
+| Version | 0.4.1 |
 | Language | Python 3.10+, no pip dependencies |
 | UI | GTK 4 + libadwaita (window), GTK 3 (on-screen counter) |
 | Tested on | Ubuntu 26.04, GNOME 50 (Wayland), Firefox 156 (snap) |
@@ -122,8 +122,8 @@ The list lives in `blocked_sites` in the config and can be edited in the window 
 From the release:
 
 ```bash
-wget https://github.com/luiz-nast/maverick/releases/download/v0.4.0/maverick_0.4.0_all.deb
-sudo apt install ./maverick_0.4.0_all.deb
+wget https://github.com/luiz-nast/maverick/releases/download/v0.4.1/maverick_0.4.1_all.deb
+sudo apt install ./maverick_0.4.1_all.deb
 systemctl --user daemon-reload
 systemctl --user enable --now maverick.service
 ```
@@ -216,7 +216,7 @@ State: `~/.local/share/maverick/state.json`, written on every counted second and
 { "day": "2026-10-04", "seconds": 1134, "per_video": { "<xesam:title>": 512 } }
 ```
 
-A `day` different from today's local date resets `seconds` and `per_video`.
+A `day` different from today's local date resets `seconds` and `per_video`. The daemon reloads the file when another process changes it (for example `maverick reset`), so external edits are not overwritten by the next counted second.
 
 ## Repository layout
 
