@@ -91,7 +91,7 @@ class App:
             return True
         if not p.metadata_hidden:
             return False
-        verdict = self.a11y.browser_has_youtube()
+        verdict = self.a11y.private_media_is_youtube()
         if verdict is not None:
             return verdict
         if self.config.count_private_media and not self._private_fallback_logged:

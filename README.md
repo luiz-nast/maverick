@@ -7,7 +7,7 @@ Maverick is a Linux desktop app with two jobs:
 
 | | |
 |---|---|
-| Version | 0.3.0 |
+| Version | 0.4.0 |
 | Language | Python 3.10+, no pip dependencies |
 | UI | GTK 4 + libadwaita (window), GTK 3 (on-screen counter) |
 | Tested on | Ubuntu 26.04, GNOME 50 (Wayland), Firefox 156 (snap) |
@@ -24,7 +24,7 @@ Maverick is a Linux desktop app with two jobs:
 | Component | Command / file | Runs as | Purpose |
 |---|---|---|---|
 | Daemon | `maverick daemon`, systemd user unit `maverick.service` | user | Polls MPRIS every second, counts time, pauses at the limit, drives the counter, checks the site block every 60 s |
-| Window | `maverick` (menu entry "Maverick") | user | Today's usage ring, limit setting, most watched videos, blocked-site list with Apply button |
+| Window | `maverick` (menu entry "Maverick") | user | Today's usage ring, limit setting, private-window detection status with an Enable button, most watched videos, blocked-site list with Apply button |
 | Counter | part of the daemon | user | Always-on-top pill `▶ MM:SS / MM:SS` at the top-right, visible only while a video plays |
 | Block helper | `/usr/lib/maverick/maverick-blockctl` | root via `pkexec` | Writes `/etc/hosts` and browser policies. Validates every domain |
 
@@ -64,8 +64,12 @@ Implementation: `limit_minutes` holds the target limit; `today_cap` holds `{day,
 Every second the daemon lists `org.mpris.MediaPlayer2.*` on the session bus and reads `PlaybackStatus` and `Metadata`. A playing player counts as YouTube if the first applicable layer says so:
 
 1. **MPRIS metadata.** `xesam:url` (Firefox) or `mpris:artUrl` (Chrome) matches `youtube.com`, `youtu.be`, `youtube-nocookie.com`, `ytimg.com` or `googlevideo.com`. Exact.
-2. **Accessibility tree (AT-SPI).** Used only for a browser player with no URL and no art URL, which is how Firefox and Chrome report media in private windows (Firefox sets the title to "O Firefox está reproduzindo mídia"). Looks for a document named `... - YouTube` or with a `DocURL` on `youtube.com`. Exact, but the browser must be on the accessibility bus. On GNOME that needs `gsettings set org.gnome.desktop.interface toolkit-accessibility true` and a browser restart. Cached 5 s.
-3. **Fallback.** If the browser is not on the accessibility bus, private-window media counts as YouTube when `count_private_media` is `true` (default). Any media played in a private window is then counted and, after the limit, paused.
+2. **Accessibility tree (AT-SPI).** Used only for a browser player with no URL and no art URL, which is how Firefox and Chrome report media in private windows (Firefox sets the title to "O Firefox está reproduzindo mídia"). For each browser window on the accessibility bus the daemon reads:
+   - the window title, which holds the selected tab's title and, for private windows, the suffix `— navegação privativa` (pt-BR) or `Private Browsing` (en);
+   - the tab list: each tab's title, whether it is selected, and its sound button (`Silenciar aba`/`Mute tab` while playing, `Reproduzir som na aba`/`Play tab` when autoplay is blocked).
+
+   Only private windows are considered (all windows if none is recognized as private). In each one, if the tab list agrees with the window title and some tab is playing sound, that tab decides; otherwise the selected tab from the window title decides. The media counts as YouTube when the deciding title ends with `- YouTube` or `- YouTube Music`. Requires the browser on the accessibility bus: on GNOME, `toolkit-accessibility` must be on before the browser starts (button **Ativar** in the window, or `gsettings set org.gnome.desktop.interface toolkit-accessibility true`), then restart the browser. Cached 3 s.
+3. **Fallback.** If no browser is on the accessibility bus, private-window media counts as YouTube when `count_private_media` is `true` (default; switch "Na dúvida, contar como YouTube" in the window). Any media played in a private window is then counted and, after the limit, paused.
 
 `maverick check` prints which layer applies right now.
 
@@ -118,8 +122,8 @@ The list lives in `blocked_sites` in the config and can be edited in the window 
 From the release:
 
 ```bash
-wget https://github.com/luiz-nast/maverick/releases/download/v0.3.0/maverick_0.3.0_all.deb
-sudo apt install ./maverick_0.3.0_all.deb
+wget https://github.com/luiz-nast/maverick/releases/download/v0.4.0/maverick_0.4.0_all.deb
+sudo apt install ./maverick_0.4.0_all.deb
 systemctl --user daemon-reload
 systemctl --user enable --now maverick.service
 ```
@@ -203,7 +207,7 @@ journalctl --user -u maverick -f
 | `today_cap` | object or null | null | `{day, minutes}`: ceiling for that date, written on every limit change |
 | `hide_after_seconds` | int | 2 | Counter stays visible this long after playback stops; also the duration of the "time's up" notice |
 | `warn_minutes_left` | int | 5 | Remaining minutes for the warning notification and yellow counter |
-| `count_private_media` | bool | true | Count hidden-metadata browser media as YouTube when the accessibility tree cannot confirm |
+| `count_private_media` | bool | true | Count hidden-metadata browser media as YouTube when no browser is on the accessibility bus. Also a switch in the window |
 | `blocked_sites` | list of domains | the 12 default domains | Sites to block; applied to the system only via Apply / `maverick block apply` |
 
 State: `~/.local/share/maverick/state.json`, written on every counted second and on SIGTERM/SIGINT/SIGHUP.
@@ -220,7 +224,7 @@ A `day` different from today's local date resets `seconds` and `per_video`.
 maverick/__main__.py    CLI and subcommands
 maverick/app.py         daemon loop: classify players, count, warn, pause, overlay, block watch
 maverick/mpris.py       MPRIS players over D-Bus, Pause()
-maverick/a11y.py        AT-SPI walk for YouTube documents in private windows
+maverick/a11y.py        AT-SPI: browser window titles, tabs and tab sound state for private windows
 maverick/overlay.py     GTK 3 always-on-top counter (forces GDK_BACKEND=x11)
 maverick/gui.py         GTK 4 + libadwaita window
 maverick/blocking.py    default site list, domain validation, hosts/policy rendering, status
@@ -253,7 +257,8 @@ packaging/build-deb.sh                      # build the package
 
 - Chrome does not publish the page URL over MPRIS; detection relies on the `i.ytimg.com` thumbnail. Shorts without artwork may fall to layer 2 or 3.
 - YouTube Music and YouTube ads are counted.
-- Layer 2 is tested for bus connectivity and tree traversal on GNOME Shell, not yet against a live Firefox with accessibility enabled.
+- Layer 2 is tested against Firefox 156 (snap). Firefox can leave the tab list in the accessibility tree stale for a window that is not in the foreground; the window title stays current, so detection then relies on the selected tab only. A YouTube video playing in a non-selected tab of such a window is not detected.
+- With accessibility on, GTK apps and Firefox maintain accessibility trees, which costs some CPU and memory.
 - A browser with MPRIS disabled (Firefox `media.hardwaremediakeys.enabled = false`) is invisible to the daemon.
 
 ## Troubleshooting
@@ -262,7 +267,7 @@ packaging/build-deb.sh                      # build the package
 |---|---|
 | Counter never appears | `maverick check` lists a `Playing` YouTube player? If not, the browser is not exposing MPRIS. |
 | Private window not counted | `maverick check` shows `privado/sem metadados`? Then layer 3 applies unless `count_private_media` is false. |
-| Other media paused in a private window after the limit | Layer 3 fallback. Enable `toolkit-accessibility` for exact detection or set `count_private_media` to false. |
+| Other media paused or counted in a private window | Layer 3 fallback. Click **Ativar** on "Janela anônima" in the window and restart Firefox, or turn off "Na dúvida, contar como YouTube". |
 | Blocked site still opens | Tab opened before the block: reload. Firefox block page: restart Firefox. `maverick block list` shows `✗`: click Apply. |
 | "Bloqueio no sistema indisponível" | Option B install. Use Option A. |
 | Raised the limit, today's did not change | By design: raises apply from tomorrow. `maverick status` shows both values. |

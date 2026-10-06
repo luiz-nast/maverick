@@ -47,7 +47,7 @@ class FakeA11y:
     def __init__(self, verdict):
         self.verdict = verdict
 
-    def browser_has_youtube(self):
+    def private_media_is_youtube(self):
         return self.verdict
 
 

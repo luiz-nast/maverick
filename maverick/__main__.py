@@ -30,14 +30,23 @@ def check() -> int:
         print("Acessibilidade: barramento AT-SPI indisponível")
     elif not browsers:
         print("Acessibilidade: barramento ok, nenhum navegador registrado")
-        print("  Mídia em janela privada será contada pelo fallback (count_private_media).")
-        print("  Para detecção exata em janela privada:")
+        cfg = Config.load()
+        print(f"  Mídia em janela privada: {'contada como YouTube' if cfg.count_private_media else 'ignorada'}"
+              " (count_private_media). Detecção exata: ative em Maverick > Janela anônima, ou")
         print("    gsettings set org.gnome.desktop.interface toolkit-accessibility true")
         print("  e reabra o navegador.")
     else:
-        verdict = a11y.browser_has_youtube()
-        print(f"Acessibilidade: navegadores no barramento: {', '.join(browsers)}")
-        print(f"  Aba do YouTube encontrada: {'sim' if verdict else 'não'}")
+        windows = a11y.windows() or []
+        print(f"Acessibilidade: navegadores no barramento: {', '.join(browsers)} (detecção exata)")
+        for w in windows:
+            kind = "privada" if w.private else "normal"
+            print(f"  Janela {kind}: {w.selected_title[:70] or '(nova aba)'}"
+                  f"  [lista de abas {'em dia' if w.tabs_fresh else 'desatualizada'}]")
+            for t in w.tabs:
+                flags = " ".join(f for f, on in (("selecionada", t.selected), (f"som:{t.audio}", bool(t.audio))) if on)
+                print(f"    [{flags or '-'}] {t.title[:66]}")
+        from .a11y import private_media_verdict
+        print(f"  Mídia de janela privada agora seria: {'YouTube' if private_media_verdict(windows) else 'outro site'}")
 
     print()
     return block_list()

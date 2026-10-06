@@ -18,6 +18,7 @@ gi.require_version("Graphene", "1.0")
 from gi.repository import Adw, Gdk, Gio, GLib, Graphene, Gsk, Gtk  # noqa: E402
 
 from . import __version__, blocking  # noqa: E402
+from .a11y import A11y  # noqa: E402
 from .store import APP_ID, APP_NAME, Config, State, fmt  # noqa: E402
 
 REPO_URL = "https://github.com/luiz-nast/maverick"
@@ -116,6 +117,8 @@ class Window(Adw.ApplicationWindow):
         self._site_rows: list[Gtk.Widget] = []
         self._top_rows: list[Gtk.Widget] = []
         self._block_status = blocking.status()
+        self._a11y = A11y()
+        self._iface_settings = Gio.Settings.new("org.gnome.desktop.interface")
 
         self.toasts = Adw.ToastOverlay()
         view = Adw.ToolbarView()
@@ -136,6 +139,7 @@ class Window(Adw.ApplicationWindow):
 
         self.refresh_usage()
         self.refresh_service()
+        self.refresh_private()
         self.rebuild_sites()
         GLib.timeout_add_seconds(1, self.refresh_usage)
         GLib.timeout_add_seconds(5, self.refresh_slow)
@@ -180,6 +184,22 @@ class Window(Adw.ApplicationWindow):
         self.service_button.connect("clicked", self._on_start_service)
         self.service_row.add_suffix(self.service_button)
         group.add(self.service_row)
+
+        self.private_row = Adw.ActionRow(title="Janela anônima")
+        self.private_icon = Gtk.Image()
+        self.private_row.add_prefix(self.private_icon)
+        self.private_button = Gtk.Button(label="Ativar", valign=Gtk.Align.CENTER, css_classes=["pill"])
+        self.private_button.connect("clicked", self._on_enable_a11y)
+        self.private_row.add_suffix(self.private_button)
+        group.add(self.private_row)
+
+        self.fallback_row = Adw.SwitchRow(
+            title="Na dúvida, contar como YouTube",
+            subtitle="Vale para vídeo anônimo enquanto a detecção não é exata",
+            active=self.config.count_private_media,
+        )
+        self.fallback_row.connect("notify::active", self._on_fallback_toggled)
+        group.add(self.fallback_row)
         return group
 
     def _build_today_group(self) -> Adw.PreferencesGroup:
@@ -240,6 +260,7 @@ class Window(Adw.ApplicationWindow):
 
     def refresh_slow(self) -> bool:
         self.refresh_service()
+        self.refresh_private()
         st = blocking.status()
         if st.hosts != self._block_status.hosts or st.helper_installed != self._block_status.helper_installed:
             self._block_status = st
@@ -255,6 +276,21 @@ class Window(Adw.ApplicationWindow):
         self.service_icon.set_from_icon_name("emblem-ok-symbolic" if active else "dialog-warning-symbolic")
         self.service_icon.set_css_classes(["success"] if active else ["warning"])
         self.service_button.set_visible(not active)
+
+    def refresh_private(self) -> None:
+        enabled = self._iface_settings.get_boolean("toolkit-accessibility")
+        exact = bool(self._a11y.browsers_on_bus()) if enabled else False
+        if exact:
+            subtitle, icon, css = "Detecção exata: separa YouTube de outros sites pelo título da aba", "emblem-ok-symbolic", "success"
+        elif enabled:
+            subtitle, icon, css = "Feche e abra o Firefox para ativar a detecção exata", "view-refresh-symbolic", "warning"
+        else:
+            subtitle, icon, css = "Aproximada: ative para separar YouTube de outros sites", "dialog-warning-symbolic", "warning"
+        self.private_row.set_subtitle(subtitle)
+        self.private_icon.set_from_icon_name(icon)
+        self.private_icon.set_css_classes([css])
+        self.private_button.set_visible(not enabled)
+        self.fallback_row.set_visible(not exact)
 
     def rebuild_sites(self) -> None:
         st = self._block_status
@@ -321,6 +357,17 @@ class Window(Adw.ApplicationWindow):
         self._update_limit_subtitle()
         self.refresh_usage()
         return False
+
+    def _on_enable_a11y(self, _btn) -> None:
+        self._iface_settings.set_boolean("toolkit-accessibility", True)
+        self.toasts.add_toast(Adw.Toast(title="Acessibilidade ativada. Feche e abra o Firefox.", timeout=6))
+        self.refresh_private()
+
+    def _on_fallback_toggled(self, row: Adw.SwitchRow, _pspec) -> None:
+        self.config = Config.load()
+        if self.config.count_private_media != row.get_active():
+            self.config.count_private_media = row.get_active()
+            self.config.save()
 
     def _on_start_service(self, _btn) -> None:
         subprocess.run(["systemctl", "--user", "enable", "--now", "maverick.service"])
