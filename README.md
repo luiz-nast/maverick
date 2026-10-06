@@ -7,7 +7,7 @@ Maverick is a Linux desktop app with two jobs:
 
 | | |
 |---|---|
-| Version | 0.4.1 |
+| Version | 0.4.2 |
 | Language | Python 3.10+, no pip dependencies |
 | UI | GTK 4 + libadwaita (window), GTK 3 (on-screen counter) |
 | Tested on | Ubuntu 26.04, GNOME 50 (Wayland), Firefox 156 (snap) |
@@ -15,7 +15,7 @@ Maverick is a Linux desktop app with two jobs:
 | App ID | `io.github.luiz_nast.Maverick` |
 | License | MIT |
 | Repository | https://github.com/luiz-nast/maverick |
-| Former name | `yt-limit` (data is migrated automatically, old GitHub URL redirects) |
+| Former name | `yt-limit` (old GitHub URL redirects) |
 
 ![Maverick window](docs/screenshot.png)
 
@@ -117,18 +117,16 @@ The list lives in `blocked_sites` in the config and can be edited in the window 
 
 ## Install
 
-### Option A: system package (includes site blocking)
-
 From the release:
 
 ```bash
-wget https://github.com/luiz-nast/maverick/releases/download/v0.4.1/maverick_0.4.1_all.deb
-sudo apt install ./maverick_0.4.1_all.deb
+wget https://github.com/luiz-nast/maverick/releases/download/v0.4.2/maverick_0.4.2_all.deb
+sudo apt install ./maverick_0.4.2_all.deb
 systemctl --user daemon-reload
 systemctl --user enable --now maverick.service
 ```
 
-From source (builds the `.deb`, removes a user-only install if present, installs, starts the daemon):
+From source (builds the `.deb`, installs it, restarts the daemon; also the update path):
 
 ```bash
 git clone https://github.com/luiz-nast/maverick.git ~/maverick
@@ -150,15 +148,6 @@ Installed paths:
 Dependencies: `python3`, `python3-gi`, `gir1.2-gtk-3.0`, `gir1.2-gtk-4.0`, `gir1.2-adw-1 (>= 1.5)`, `libnotify-bin`, `pkexec`.
 
 Uninstall: `sudo apt remove maverick`.
-
-### Option B: user only (no root, no site blocking)
-
-```bash
-git clone https://github.com/luiz-nast/maverick.git ~/maverick
-~/maverick/install.sh
-```
-
-Installs to `~/.local/lib/maverick`, `~/.local/bin/maverick`, `~/.config/systemd/user/maverick.service`, plus menu entry and icon under `~/.local/share`. Remove with `./uninstall.sh`. Do not keep Option A and B at the same time; `install-system.sh` removes B first.
 
 Do not start the daemon from an AppArmor-confined process (for example from inside a snap): the Firefox snap answers its D-Bus calls with `Access denied`. The systemd user service and a normal terminal are unconfined.
 
@@ -223,17 +212,17 @@ A `day` different from today's local date resets `seconds` and `per_video`. The 
 ```
 maverick/__main__.py    CLI and subcommands
 maverick/app.py         daemon loop: classify players, count, warn, pause, overlay, block watch
+maverick/dbus.py        shared synchronous D-Bus helpers (Gio)
 maverick/mpris.py       MPRIS players over D-Bus, Pause()
 maverick/a11y.py        AT-SPI: browser window titles, tabs and tab sound state for private windows
 maverick/overlay.py     GTK 3 always-on-top counter (forces GDK_BACKEND=x11)
 maverick/gui.py         GTK 4 + libadwaita window
 maverick/blocking.py    default site list, domain validation, hosts/policy rendering, status
 maverick/blockctl.py    root helper: writes /etc/hosts and browser policies atomically
-maverick/store.py       config and state JSON, migration from yt-limit
+maverick/store.py       config and state JSON, limit rule, shared usage status
 data/                   icon, .desktop, polkit policy, systemd unit, helper launcher
 packaging/build-deb.sh  builds dist/maverick_<version>_all.deb
 packaging/install-system.sh
-install.sh, uninstall.sh  user-only install
 tests/                  unittest suite
 ```
 
@@ -258,7 +247,7 @@ packaging/build-deb.sh                      # build the package
 - Chrome does not publish the page URL over MPRIS; detection relies on the `i.ytimg.com` thumbnail. Shorts without artwork may fall to layer 2 or 3.
 - YouTube Music and YouTube ads are counted.
 - Layer 2 is tested against Firefox 156 (snap). Firefox can leave the tab list in the accessibility tree stale for a window that is not in the foreground; the window title stays current, so detection then relies on the selected tab only. A YouTube video playing in a non-selected tab of such a window is not detected.
-- With accessibility on, GTK apps and Firefox maintain accessibility trees, which costs some CPU and memory.
+- With accessibility on, GTK apps and Firefox maintain accessibility trees, which costs some CPU and memory. Maverick's own window and counter are on that bus too; the scan skips its own process to avoid blocking on itself.
 - A browser with MPRIS disabled (Firefox `media.hardwaremediakeys.enabled = false`) is invisible to the daemon.
 
 ## Troubleshooting
@@ -269,6 +258,6 @@ packaging/build-deb.sh                      # build the package
 | Private window not counted | `maverick check` shows `privado/sem metadados`? Then layer 3 applies unless `count_private_media` is false. |
 | Other media paused or counted in a private window | Layer 3 fallback. Click **Ativar** on "Janela anônima" in the window and restart Firefox, or turn off "Na dúvida, contar como YouTube". |
 | Blocked site still opens | Tab opened before the block: reload. Firefox block page: restart Firefox. `maverick block list` shows `✗`: click Apply. |
-| "Bloqueio no sistema indisponível" | Option B install. Use Option A. |
+| "Bloqueio no sistema indisponível" | Running from source without the package. Install the `.deb`. |
 | Raised the limit, today's did not change | By design: raises apply from tomorrow. `maverick status` shows both values. |
 | `Access denied` in logs | Daemon started from a confined process. Use the systemd service. |

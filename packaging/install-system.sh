@@ -1,14 +1,9 @@
 #!/usr/bin/env bash
-# Instala o Maverick como aplicativo do sistema: gera o .deb, remove a instalação
-# de usuário (se houver), instala com apt e inicia o contador nesta sessão.
+# Gera o .deb a partir do repositório, instala com apt e (re)inicia o contador.
 set -euo pipefail
-
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DEB=$("$ROOT/packaging/build-deb.sh")
-"$ROOT/uninstall.sh" --quiet || true
+DEB=$("$(dirname "${BASH_SOURCE[0]}")/build-deb.sh")
 sudo apt install -y "$DEB"
 systemctl --user daemon-reload
 systemctl --user enable maverick.service
 systemctl --user restart maverick.service
-echo
 echo "Maverick instalado. Abra pelo menu de aplicativos ou rode: maverick"

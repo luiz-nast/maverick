@@ -1,14 +1,9 @@
 import os
-import tempfile
 import time
 import unittest
 
-_tmp = tempfile.mkdtemp()
-os.environ["XDG_CONFIG_HOME"] = os.path.join(_tmp, "config")
-os.environ["XDG_DATA_HOME"] = os.path.join(_tmp, "data")
-
-from maverick import app as appmod  # noqa: E402
-from maverick.mpris import Player  # noqa: E402
+from maverick import app as appmod
+from maverick.mpris import Player
 
 appmod.notify = lambda *a, **k: None
 
@@ -57,8 +52,7 @@ class DaemonTest(unittest.TestCase):
         a.mpris, a.overlay = FakeMpris(), StubOverlay()
         a.config.limit_minutes, a.config.hide_after_seconds = limit, 2
         a.state.seconds, a.state.per_video = 0, {}
-        a._check_block = lambda: None
-        a._state_mtime = a._state_file_mtime()
+        a._state_mtime = appmod.mtime(appmod.STATE_FILE)
         return a
 
     def test_counts_only_playing_youtube(self):
@@ -92,7 +86,7 @@ class DaemonTest(unittest.TestCase):
         self.assertEqual(a.state.seconds, 60)
         self.assertIn("org.mpris.MediaPlayer2.firefox.instance_1", a.mpris.paused)
         self.assertNotIn("org.mpris.MediaPlayer2.firefox.instance_2", a.mpris.paused)
-        self.assertEqual(a.overlay.last, "⛔ Tempo esgotado, volte amanhã")
+        self.assertEqual(a.overlay.last, appmod.TIME_UP)
 
     def test_private_window_layers(self):
         a = self.make()

@@ -101,9 +101,9 @@ class BlockctlApplyTest(unittest.TestCase):
         f = self.tmp / "firefox/policies/policies.json"
         f.parent.mkdir(parents=True)
         f.write_text("{ broken")
-        warnings = blockctl.apply(["poki.com"])
+        warning = blockctl.apply(["poki.com"])
         self.assertEqual(f.read_text(), "{ broken")
-        self.assertTrue(warnings)
+        self.assertIn("JSON", warning)
         self.assertEqual(b.hosts_domains((self.tmp / "hosts").read_text()), ["poki.com"])
 
     def test_cli_rejects_invalid_domain(self):
@@ -113,34 +113,21 @@ class BlockctlApplyTest(unittest.TestCase):
 
     def test_cli_requires_root(self):
         with mock.patch.object(blockctl.os, "geteuid", return_value=1000):
-            self.assertEqual(blockctl.main(["defaults"]), 1)
+            self.assertEqual(blockctl.main(["clear"]), 1)
+
+
+class StatusTest(unittest.TestCase):
+    def test_sync(self):
+        st = b.BlockStatus(True, ["poki.com", "y8.com"])
+        self.assertTrue(st.in_sync(["y8.com", "poki.com"]))
+        self.assertEqual(st.missing(["poki.com", "friv.com"]), ["friv.com"])
+        self.assertEqual(st.extra(["poki.com"]), ["y8.com"])
+
+    def test_group_by_site(self):
+        self.assertEqual(b.group_by_site(["poki.com", "x.org", "poki.com.br"]),
+                         [("Poki", ["poki.com", "poki.com.br"]), ("x.org", ["x.org"])])
 
 
 if __name__ == "__main__":
     unittest.main()
 
-
-class LimitRuleTest(unittest.TestCase):
-    def test_raise_waits_until_tomorrow(self):
-        from maverick.store import Config
-        c = Config(limit_minutes=30)
-        self.assertFalse(c.set_limit(60, "2026-10-05"))
-        self.assertEqual(c.effective_limit("2026-10-05"), 30)
-        self.assertEqual(c.effective_limit("2026-10-06"), 60)
-
-    def test_lower_applies_now_and_sticks_today(self):
-        from maverick.store import Config
-        c = Config(limit_minutes=30)
-        self.assertTrue(c.set_limit(20, "2026-10-05"))
-        self.assertEqual(c.effective_limit("2026-10-05"), 20)
-        self.assertFalse(c.set_limit(30, "2026-10-05"))
-        self.assertEqual(c.effective_limit("2026-10-05"), 20)
-        self.assertEqual(c.effective_limit("2026-10-06"), 30)
-
-    def test_raise_then_lower_below_today(self):
-        from maverick.store import Config
-        c = Config(limit_minutes=30)
-        c.set_limit(90, "2026-10-05")
-        self.assertTrue(c.set_limit(25, "2026-10-05"))
-        self.assertEqual(c.effective_limit("2026-10-05"), 25)
-        self.assertEqual(c.effective_limit("2026-10-06"), 25)

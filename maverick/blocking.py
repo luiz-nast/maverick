@@ -1,16 +1,13 @@
-"""Bloqueio de sites de jogos no sistema.
+"""Bloqueio de sites de jogos no sistema (leitura; a escrita fica em blockctl.py).
 
-Três camadas, todas gravadas pelo helper root `maverick-blockctl`:
+Três camadas, gravadas pelo helper root `maverick-blockctl`:
 
-- /etc/hosts: bloco gerenciado apontando cada domínio (e www., m.) para 0.0.0.0 e ::.
-  Vale para qualquer navegador e programa. O Firefox respeita /etc/hosts mesmo com
-  DNS sobre HTTPS (`network.trr.exclude-etc-hosts`, padrão true).
-- /etc/firefox/policies/policies.json: `WebsiteFilter.Block` com `*://*.dominio/*`.
-  Cobre todos os subdomínios e mostra a página de bloqueio do Firefox. O snap do
-  Firefox lê /etc/firefox (plug `etc-firefox`). Exige reiniciar o Firefox.
+- /etc/hosts: bloco gerenciado com cada domínio (e www., m.) em 0.0.0.0 e ::. Vale
+  para qualquer programa; o Firefox respeita mesmo com DNS sobre HTTPS
+  (`network.trr.exclude-etc-hosts`, padrão true).
+- /etc/firefox/policies/policies.json: `WebsiteFilter.Block` com `*://*.dominio/*`;
+  cobre subdomínios e mostra a página de bloqueio. O snap lê /etc/firefox.
 - /etc/opt/chrome e /etc/chromium policies/managed/maverick.json: `URLBlocklist`.
-
-Este módulo só lê o sistema; a escrita fica em blockctl.py.
 """
 
 from __future__ import annotations
@@ -32,6 +29,7 @@ DEFAULT_SITES: list[tuple[str, tuple[str, ...]]] = [
     ("Coolmath Games", ("coolmathgames.com",)),
     ("Kizi", ("kizi.com",)),
 ]
+_SITE_OF = {d: name for name, domains in DEFAULT_SITES for d in domains}
 
 HOSTS_FILE = Path("/etc/hosts")
 FIREFOX_POLICY_FILE = Path("/etc/firefox/policies/policies.json")
@@ -48,121 +46,86 @@ SUBDOMAINS = ("", "www.", "m.")
 MAX_DOMAINS = 500
 
 _DOMAIN_RE = re.compile(r"^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
+_FIREFOX_PATTERN_RE = re.compile(r"\*://\*\.([^/]+)/\*")
 
 
 def default_domains() -> list[str]:
-    return [d for _, domains in DEFAULT_SITES for d in domains]
-
-
-def site_name(domain: str) -> str:
-    for name, domains in DEFAULT_SITES:
-        if domain in domains:
-            return name
-    return domain
+    return list(_SITE_OF)
 
 
 def group_by_site(domains: list[str]) -> list[tuple[str, list[str]]]:
-    """[(nome, [domínios])] preservando a ordem da lista."""
+    """[(nome do site, [domínios])] na ordem da lista; domínio avulso vira o próprio nome."""
     groups: dict[str, list[str]] = {}
     for d in domains:
-        groups.setdefault(site_name(d), []).append(d)
+        groups.setdefault(_SITE_OF.get(d, d), []).append(d)
     return list(groups.items())
 
 
 def normalize_domain(raw: str) -> str | None:
-    """Aceita 'https://www.Poki.com/jogo?x=1' e devolve 'poki.com'. None se inválido."""
-    s = str(raw).strip().lower()
-    s = re.sub(r"^[a-z][a-z0-9+.-]*://", "", s)
-    s = re.split(r"[/?#]", s, maxsplit=1)[0]
-    s = s.rsplit("@", 1)[-1].split(":", 1)[0].rstrip(".")
-    for prefix in ("www.", "m."):
-        if s.startswith(prefix):
-            s = s[len(prefix):]
-            break
+    """'https://www.Poki.com/jogo?x=1' -> 'poki.com'. None se inválido."""
+    s = re.sub(r"^[a-z][a-z0-9+.-]*://", "", str(raw).strip().lower())
+    s = re.split(r"[/?#]", s, maxsplit=1)[0].rsplit("@", 1)[-1].split(":", 1)[0].rstrip(".")
+    s = re.sub(r"^(www|m)\.", "", s)
     return s if _DOMAIN_RE.match(s) else None
 
 
 # --- /etc/hosts -----------------------------------------------------------
-def strip_block(text: str) -> str:
-    out, inside = [], False
-    for line in text.splitlines():
-        if line.strip() == BEGIN:
-            inside = True
-            continue
-        if inside:
-            if line.strip() == END:
-                inside = False
-            continue
-        out.append(line)
-    return "\n".join(out).rstrip("\n") + "\n"
-
-
-def render_hosts(text: str, domains: list[str]) -> str:
-    base = strip_block(text)
-    if not domains:
-        return base
-    lines = [BEGIN, f"{DOMAINS_TAG} {' '.join(domains)}"]
-    for d in domains:
-        for sub in SUBDOMAINS:
-            lines.append(f"0.0.0.0 {sub}{d}")
-            lines.append(f":: {sub}{d}")
-    lines.append(END)
-    return base + "\n" + "\n".join(lines) + "\n"
-
-
-def hosts_domains(text: str) -> list[str]:
-    """Domínios do bloco gerenciado que de fato têm a linha 0.0.0.0."""
-    declared: list[str] = []
-    mapped: set[str] = set()
-    inside = False
+def _split_hosts(text: str) -> tuple[list[str], list[str]]:
+    """(linhas fora do bloco do Maverick, linhas dentro)."""
+    outside, inside, in_block = [], [], False
     for line in text.splitlines():
         s = line.strip()
         if s == BEGIN:
-            inside = True
-        elif s == END:
-            inside = False
-        elif inside and s.startswith(DOMAINS_TAG):
-            declared = s[len(DOMAINS_TAG):].split()
-        elif inside and s.startswith("0.0.0.0 "):
-            mapped.add(s.split()[1])
+            in_block = True
+        elif s == END and in_block:
+            in_block = False
+        else:
+            (inside if in_block else outside).append(line)
+    return outside, inside
+
+
+def render_hosts(text: str, domains: list[str]) -> str:
+    base = "\n".join(_split_hosts(text)[0]).rstrip("\n") + "\n"
+    if not domains:
+        return base
+    lines = [BEGIN, f"{DOMAINS_TAG} {' '.join(domains)}"]
+    lines += [f"{ip} {sub}{d}" for d in domains for sub in SUBDOMAINS for ip in ("0.0.0.0", "::")]
+    return base + "\n" + "\n".join(lines + [END]) + "\n"
+
+
+def hosts_domains(text: str) -> list[str]:
+    """Domínios do bloco que de fato têm a linha 0.0.0.0 (detecta edição manual)."""
+    inside = [line.strip() for line in _split_hosts(text)[1]]
+    declared = next((s[len(DOMAINS_TAG):].split() for s in inside if s.startswith(DOMAINS_TAG)), [])
+    mapped = {s.split()[1] for s in inside if s.startswith("0.0.0.0 ")}
     return [d for d in declared if d in mapped]
 
 
-# --- políticas dos navegadores --------------------------------------------
+# --- Firefox --------------------------------------------------------------
 def firefox_patterns(domains: list[str]) -> list[str]:
     return [f"*://*.{d}/*" for d in domains]
 
 
 def merge_firefox_policy(existing: dict | None, new: list[str], old: list[str]) -> dict:
-    """Troca os padrões do Maverick em WebsiteFilter.Block preservando o resto."""
+    """Troca os padrões do Maverick em WebsiteFilter.Block, preservando o resto."""
     data = existing if isinstance(existing, dict) else {}
     policies = data.setdefault("policies", {})
-    wf = policies.get("WebsiteFilter") or {}
-    ours = set(firefox_patterns(old)) | set(firefox_patterns(new))
-    block = [p for p in wf.get("Block", []) if p not in ours] + firefox_patterns(new)
+    wf = policies.pop("WebsiteFilter", None) or {}
+    ours = set(firefox_patterns(old + new))
+    block = [p for p in wf.pop("Block", []) if p not in ours] + firefox_patterns(new)
     if block:
         wf["Block"] = block
-    else:
-        wf.pop("Block", None)
     if wf:
         policies["WebsiteFilter"] = wf
-    else:
-        policies.pop("WebsiteFilter", None)
     return data
 
 
 def firefox_policy_domains() -> set[str]:
     try:
-        data = json.loads(FIREFOX_POLICY_FILE.read_text())
-        block = data["policies"]["WebsiteFilter"]["Block"]
+        block = json.loads(FIREFOX_POLICY_FILE.read_text())["policies"]["WebsiteFilter"]["Block"]
+        return {m.group(1) for p in block if (m := _FIREFOX_PATTERN_RE.fullmatch(p))}
     except (OSError, ValueError, KeyError, TypeError):
         return set()
-    out = set()
-    for p in block:
-        m = re.fullmatch(r"\*://\*\.([^/]+)/\*", p)
-        if m:
-            out.add(m.group(1))
-    return out
 
 
 # --- status (sem root) ----------------------------------------------------
@@ -170,18 +133,15 @@ def firefox_policy_domains() -> set[str]:
 class BlockStatus:
     helper_installed: bool
     hosts: list[str]
-    firefox: set[str]
 
     def missing(self, wanted: list[str]) -> list[str]:
-        applied = set(self.hosts)
-        return [d for d in wanted if d not in applied]
-
-    def extra(self, wanted: list[str]) -> list[str]:
-        w = set(wanted)
-        return [d for d in self.hosts if d not in w]
+        return [d for d in wanted if d not in self.hosts]
 
     def in_sync(self, wanted: list[str]) -> bool:
-        return not self.missing(wanted) and not self.extra(wanted)
+        return set(wanted) == set(self.hosts)
+
+    def extra(self, wanted: list[str]) -> list[str]:
+        return [d for d in self.hosts if d not in wanted]
 
 
 def status() -> BlockStatus:
@@ -189,4 +149,4 @@ def status() -> BlockStatus:
         hosts = hosts_domains(HOSTS_FILE.read_text())
     except OSError:
         hosts = []
-    return BlockStatus(HELPER.exists(), hosts, firefox_policy_domains())
+    return BlockStatus(HELPER.exists(), hosts)

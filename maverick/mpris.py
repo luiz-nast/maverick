@@ -1,9 +1,8 @@
-"""Leitura dos players de mídia via MPRIS (D-Bus).
+"""Players de mídia via MPRIS (D-Bus).
 
-Firefox e Chrome/Chromium publicam um player MPRIS por janela/processo quando
-uma página tem mídia ativa. Pelo PlaybackStatus sabemos se o vídeo está de fato
-tocando (e não apenas com a aba aberta), e pelos metadados (xesam:url no Firefox,
-mpris:artUrl no Chrome) sabemos se a página é do YouTube.
+Firefox e Chrome publicam a mídia da página como um player MPRIS. PlaybackStatus
+diz se está tocando de fato; os metadados (xesam:url no Firefox, mpris:artUrl no
+Chrome) dizem se é YouTube. Em janela privada os metadados vêm vazios.
 """
 
 from __future__ import annotations
@@ -11,18 +10,16 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-import gi
+from gi.repository import GLib
 
-gi.require_version("Gio", "2.0")
-from gi.repository import Gio, GLib  # noqa: E402
+from . import dbus
 
-MPRIS_PREFIX = "org.mpris.MediaPlayer2."
-MPRIS_PATH = "/org/mpris/MediaPlayer2"
-PLAYER_IFACE = "org.mpris.MediaPlayer2.Player"
-
+PREFIX = "org.mpris.MediaPlayer2."
+PATH = "/org/mpris/MediaPlayer2"
+PLAYER = "org.mpris.MediaPlayer2.Player"
+BROWSERS = ("firefox", "chrom", "brave", "vivaldi", "opera", "edge")
 YOUTUBE_RE = re.compile(
-    r"(^|[./])(youtube\.com|youtu\.be|youtube-nocookie\.com|ytimg\.com|googlevideo\.com)(/|$)",
-    re.IGNORECASE,
+    r"(^|[./])(youtube\.com|youtu\.be|youtube-nocookie\.com|ytimg\.com|googlevideo\.com)(/|$)", re.IGNORECASE
 )
 
 
@@ -35,89 +32,42 @@ class Player:
     art_url: str
 
     @property
-    def is_youtube(self) -> bool:
-        for candidate in (self.url, self.art_url):
-            if candidate and YOUTUBE_RE.search(candidate):
-                return True
-        return False
-
-    @property
     def is_playing(self) -> bool:
         return self.status == "Playing"
 
     @property
-    def is_browser(self) -> bool:
-        n = self.bus_name.lower()
-        return any(b in n for b in ("firefox", "chrom", "brave", "vivaldi", "opera", "edge"))
+    def is_youtube(self) -> bool:
+        return any(YOUTUBE_RE.search(u) for u in (self.url, self.art_url) if u)
 
     @property
     def metadata_hidden(self) -> bool:
-        """Navegador tocando sem URL nem capa: é o que acontece em janela privada
-        (Firefox mostra só "O Firefox está reproduzindo mídia")."""
-        return self.is_browser and not self.url and not self.art_url
+        """Navegador sem URL nem capa: é como a mídia de janela privada aparece."""
+        return not (self.url or self.art_url) and any(b in self.bus_name.lower() for b in BROWSERS)
 
 
 class Mpris:
     def __init__(self) -> None:
-        self.bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
-
-    def _list_names(self) -> list[str]:
-        reply = self.bus.call_sync(
-            "org.freedesktop.DBus",
-            "/org/freedesktop/DBus",
-            "org.freedesktop.DBus",
-            "ListNames",
-            None,
-            GLib.VariantType("(as)"),
-            Gio.DBusCallFlags.NONE,
-            1000,
-            None,
-        )
-        return [n for n in reply.unpack()[0] if n.startswith(MPRIS_PREFIX)]
+        self.bus = dbus.session()
 
     def players(self) -> list[Player]:
-        found: list[Player] = []
-        for name in self._list_names():
-            try:
-                reply = self.bus.call_sync(
-                    name,
-                    MPRIS_PATH,
-                    "org.freedesktop.DBus.Properties",
-                    "GetAll",
-                    GLib.Variant("(s)", (PLAYER_IFACE,)),
-                    GLib.VariantType("(a{sv})"),
-                    Gio.DBusCallFlags.NONE,
-                    1000,
-                    None,
-                )
-            except GLib.Error:
-                # Player sumiu no meio do caminho ou acesso negado: ignora.
+        names = dbus.call(self.bus, "org.freedesktop.DBus", "/org/freedesktop/DBus",
+                          "org.freedesktop.DBus", "ListNames", reply="(as)")[0]
+        found = []
+        for name in names:
+            if not name.startswith(PREFIX):
                 continue
-            props = reply.unpack()[0]
+            try:
+                props = dbus.call(self.bus, name, PATH, "org.freedesktop.DBus.Properties", "GetAll",
+                                  GLib.Variant("(s)", (PLAYER,)), "(a{sv})")[0]
+            except GLib.Error:
+                continue  # sumiu no meio do caminho ou acesso negado
             meta = props.get("Metadata") or {}
-            found.append(
-                Player(
-                    bus_name=name,
-                    status=str(props.get("PlaybackStatus", "Stopped")),
-                    title=str(meta.get("xesam:title", "") or ""),
-                    url=str(meta.get("xesam:url", "") or ""),
-                    art_url=str(meta.get("mpris:artUrl", "") or ""),
-                )
-            )
+            fields = (str(meta.get(k) or "") for k in ("xesam:title", "xesam:url", "mpris:artUrl"))
+            found.append(Player(name, str(props.get("PlaybackStatus", "Stopped")), *fields))
         return found
 
     def pause(self, player: Player) -> None:
         try:
-            self.bus.call_sync(
-                player.bus_name,
-                MPRIS_PATH,
-                PLAYER_IFACE,
-                "Pause",
-                None,
-                None,
-                Gio.DBusCallFlags.NONE,
-                1000,
-                None,
-            )
+            dbus.call(self.bus, player.bus_name, PATH, PLAYER, "Pause")
         except GLib.Error:
             pass
