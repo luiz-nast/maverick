@@ -1,6 +1,6 @@
-"""Daemon: a cada segundo consulta o MPRIS, soma tempo se um vídeo do YouTube está
-tocando, mostra o contador e pausa ao atingir o limite. A cada minuto confere se o
-bloqueio de sites continua aplicado."""
+"""Daemon. A cada segundo: soma tempo do YouTube se um vídeo está tocando (MPRIS) e
+pausa no limite; soma tempo de tela do site em foco (Instagram, Pinterest...) e
+cobre a tela quando ele está bloqueado. A cada minuto confere o bloqueio de sites."""
 
 from __future__ import annotations
 
@@ -11,13 +11,15 @@ import time
 
 from gi.repository import GLib
 
-from . import blocking
+from . import blocking, dbus
 from .a11y import A11y
 from .mpris import Mpris, Player
+from .sites import SiteStatus, evaluate, site_for_url
 from .store import APP_ID, APP_NAME, CONFIG_FILE, STATE_FILE, Config, State, fmt, mtime, usage_status
 
 log = logging.getLogger("maverick")
 BLOCK_CHECK_SECONDS = 60
+IDLE_SECONDS = 90  # sem teclado/mouse por mais que isso e sem mídia: ausente, não conta
 TIME_UP = "⛔ Tempo esgotado, volte amanhã"
 
 
@@ -34,11 +36,13 @@ class App:
         self.config, self._config_mtime = Config.load(), mtime(CONFIG_FILE)
         self.state, self._state_mtime = State.load(), mtime(STATE_FILE)
         self.mpris, self.a11y, self.debug = Mpris(), A11y(), debug
-        self.overlay = None
+        self.overlay = self.cover = None
         if show_overlay:
-            from .overlay import Overlay  # GTK só quando há janela
+            from .overlay import Cover, Overlay  # GTK só quando há janela
 
-            self.overlay = Overlay()
+            self.overlay, self.cover = Overlay(), Cover()
+        self._sites_blocked: set[str] = set()
+        self._focused_site: str | None = None
         self._warned = False
         self._block_warned = False
         self._last_status = None
@@ -72,16 +76,52 @@ class App:
         verdict = self.a11y.private_media_is_youtube()
         return self.config.count_private_media if verdict is None else verdict
 
+    def idle_seconds(self) -> float:
+        try:
+            return dbus.call(self.mpris.bus, "org.gnome.Mutter.IdleMonitor", "/org/gnome/Mutter/IdleMonitor/Core",
+                             "org.gnome.Mutter.IdleMonitor", "GetIdletime", reply="(t)")[0] / 1000
+        except GLib.Error:
+            return 0.0  # sem o monitor do GNOME, considera presente
+
+    def tick_site(self, players: list[Player]) -> SiteStatus | None:
+        """Soma 1 s ao site com regra que está em foco e devolve o status dele."""
+        domain = site_for_url(self.a11y.focused_url(), self.config.sites)
+        if domain != self._focused_site:
+            log.info("Site em foco: %s", domain or "nenhum com regra")
+            self._focused_site = domain
+        if not domain:
+            return None
+        site_media = [p for p in players if p.is_playing and (site_for_url(p.url, [domain]) or p.metadata_hidden)]
+        st = self.state.sites.setdefault(domain, {})
+        before = st.get("seconds", 0)
+        status = evaluate(self.config, domain, st, time.time(),
+                          count=bool(site_media) or self.idle_seconds() < IDLE_SECONDS)
+        if st["seconds"] != before:
+            self._save_state()
+        if not status.blocked:
+            self._sites_blocked.discard(domain)
+            return status
+        if domain not in self._sites_blocked:
+            self._sites_blocked.add(domain)
+            self._save_state()
+            log.info("%s bloqueado: %s", status.name, status.block_message)
+            notify(f"{status.name} bloqueado", status.block_message, "critical")
+        for p in site_media:
+            self.mpris.pause(p)
+        return status
+
     def tick(self) -> bool:
         self._sync_files()
         if self.state.roll_day():
             log.info("Novo dia, contador zerado.")
             self._warned = False
         try:
-            players = [p for p in self.mpris.players() if self.is_youtube(p)]
+            all_players = self.mpris.players()
         except GLib.Error as e:
             log.warning("D-Bus indisponível: %s", e)
-            players = []
+            all_players = []
+        players = [p for p in all_players if self.is_youtube(p)]
+        site = self.tick_site(all_players) if self.config.sites else None
         if self.debug:
             for p in players:
                 log.debug("%s | %s | %s | %s", p.bus_name, p.status, p.title[:50], p.url or p.art_url)
@@ -101,7 +141,7 @@ class App:
         if status != self._last_status:
             log.info("%s  %s / %s", status, fmt(self.state.seconds), fmt(self.limit_seconds))
             self._last_status = status
-        self._update_overlay(bool(playing), status)
+        self._update_overlay(bool(playing), status, site)
         return True
 
     def _notify_thresholds(self) -> None:
@@ -113,16 +153,24 @@ class App:
             self._warned = True
             notify("YouTube: quase no limite", f"Faltam {fmt(left)} para hoje.")
 
-    def _update_overlay(self, playing: bool, status: str) -> None:
-        """Visível só enquanto toca, mais `hide_after_seconds`; estourado o limite,
+    def _update_overlay(self, playing: bool, status: str, site: SiteStatus | None) -> None:
+        """Site bloqueado em foco: cobre a tela. Senão a pílula aparece enquanto o vídeo
+        toca ou o site está em foco, mais `hide_after_seconds`; com o YouTube estourado,
         cada tentativa de play mostra o aviso pelo mesmo tempo."""
         if not self.overlay:
             return
+        if site and site.blocked:
+            self.overlay.hide()
+            self.cover.show_block(f"{site.name} bloqueado", site.block_message)
+            return
+        self.cover.hide()
         now = time.monotonic()
-        if playing:
+        if playing or site:
             self._visible_until = now + self.config.hide_after_seconds
         if now >= self._visible_until:
             self.overlay.hide()
+        elif site:
+            self.overlay.show_message(site.pill, "warning" if site.limit - site.used <= 60 else "playing")
         elif self.over_limit:
             self.overlay.show_message(TIME_UP, "blocked")
         else:

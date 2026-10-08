@@ -34,6 +34,21 @@ def mtime(path: Path) -> float:
         return 0.0
 
 
+# Tempo de tela em foco por site. "daily": minutos por dia; "cycle": minutos livres,
+# depois minutos bloqueado, e recomeça.
+DEFAULT_SITE_RULES = {
+    "instagram.com": {"name": "Instagram", "mode": "daily", "minutes": 30},
+    "pinterest.com": {"name": "Pinterest", "mode": "cycle", "allow_minutes": 5, "block_minutes": 15},
+}
+
+
+def capped_limit(minutes: int, cap: dict | None, today: str) -> int:
+    """Limite de hoje: o teto do dia vale se for de hoje (aumentos só valem amanhã)."""
+    if cap and cap.get("day") == today and isinstance(cap.get("minutes"), int):
+        return min(minutes, cap["minutes"])
+    return minutes
+
+
 def usage_status(used: int, limit: int, playing: bool, warn_minutes: int) -> str:
     """idle | playing | warning | blocked, igual para o daemon e a janela."""
     if used >= limit:
@@ -71,22 +86,22 @@ class Config:
     # Mídia de janela privada quando a acessibilidade não confirma o site.
     count_private_media: bool = True
     blocked_sites: list[str] = field(default_factory=default_domains)
+    sites: dict = field(default_factory=lambda: json.loads(json.dumps(DEFAULT_SITE_RULES)))
 
     @classmethod
     def load(cls) -> "Config":
         cfg = _load(cls, CONFIG_FILE)
         cfg.blocked_sites = list(dict.fromkeys(d for d in map(normalize_domain, cfg.blocked_sites) if d))
+        cfg.sites = {d: r for d, r in (cfg.sites or {}).items()
+                     if isinstance(r, dict) and r.get("mode") in ("daily", "cycle")}
         return cfg
 
     def save(self) -> None:
         _save(self, CONFIG_FILE)
 
     def effective_limit(self, today: str | None = None) -> int:
-        """Limite em minutos que vale hoje."""
-        cap = self.today_cap or {}
-        if cap.get("day") == (today or today_iso()) and isinstance(cap.get("minutes"), int):
-            return min(self.limit_minutes, cap["minutes"])
-        return self.limit_minutes
+        """Limite do YouTube em minutos que vale hoje."""
+        return capped_limit(self.limit_minutes, self.today_cap, today or today_iso())
 
     def set_limit(self, minutes: int, today: str | None = None) -> bool:
         """Reduzir vale na hora; aumentar só amanhã. True se já vale hoje."""
@@ -96,17 +111,33 @@ class Config:
         self.limit_minutes = minutes
         return minutes <= current
 
+    def site_limit(self, domain: str, today: str | None = None) -> int:
+        """Limite diário de hoje (minutos) de um site em modo "daily"."""
+        rule = self.sites[domain]
+        return capped_limit(rule["minutes"], rule.get("today_cap"), today or today_iso())
+
+    def set_site_minutes(self, domain: str, minutes: int, today: str | None = None) -> bool:
+        """Mesma regra do YouTube para o limite diário de um site."""
+        today = today or today_iso()
+        rule, current = self.sites[domain], self.site_limit(domain, today)
+        rule["today_cap"] = {"day": today, "minutes": min(current, minutes)}
+        rule["minutes"] = minutes
+        return minutes <= current
+
 
 @dataclass
 class State:
     day: str = ""
     seconds: int = 0
     per_video: dict = field(default_factory=dict)  # título -> segundos, só do dia
+    # domínio -> {"seconds": em foco hoje, "round_used", "round_allow", "blocked_until"}
+    sites: dict = field(default_factory=dict)
 
     @classmethod
     def load(cls) -> "State":
         state = _load(cls, STATE_FILE)
         state.per_video = state.per_video or {}
+        state.sites = state.sites if isinstance(state.sites, dict) else {}
         state.roll_day()
         return state
 
@@ -114,10 +145,12 @@ class State:
         _save(self, STATE_FILE)
 
     def roll_day(self) -> bool:
-        """Zera se o dia mudou. True se zerou."""
+        """Zera os totais do dia se o dia mudou (o ciclo dos sites segue o relógio). True se zerou."""
         if self.day == today_iso():
             return False
         self.day, self.seconds, self.per_video = today_iso(), 0, {}
+        for site in self.sites.values():
+            site["seconds"] = 0
         return True
 
     def add_second(self, title: str) -> None:

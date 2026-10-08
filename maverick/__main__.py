@@ -29,12 +29,19 @@ def cmd_daemon(args) -> int:
 
 
 def cmd_status(_args) -> int:
+    import time
+
+    from .sites import evaluate
+
     cfg, state = Config.load(), State.load()
-    print(f"Hoje ({state.day}): {fmt(state.seconds)} de {fmt(cfg.effective_limit() * 60)}")
+    print(f"YouTube hoje ({state.day}): {fmt(state.seconds)} de {fmt(cfg.effective_limit() * 60)}")
     if cfg.limit_minutes != cfg.effective_limit():
         print(f"A partir de amanhã: {cfg.limit_minutes} min")
     for title, secs in state.top(10):
         print(f"  {fmt(secs)}  {title}")
+    for domain in cfg.sites:
+        status = evaluate(cfg, domain, state.sites.get(domain, {}), time.time(), count=False)
+        print(f"{status.name}: {status.summary}")
     return 0
 
 
@@ -68,6 +75,7 @@ def cmd_check(args) -> int:
                 print(f"    [{' '.join(flags) or '-'}] {t.title[:66]}")
         verdict = "YouTube" if private_media_verdict(windows) else "outro site"
         print(f"  Mídia de janela privada agora seria: {verdict}")
+        print(f"  Aba visível da janela em foco: {a11y.focused_url() or 'nenhuma janela de navegador em foco'}")
     print()
     return cmd_block_list(args)
 

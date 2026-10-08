@@ -6,8 +6,10 @@ O bloqueio no sistema é aplicado via pkexec + maverick-blockctl.
 
 from __future__ import annotations
 
+import copy
 import math
 import subprocess
+import time
 
 import gi
 
@@ -19,6 +21,7 @@ from gi.repository import Adw, Gdk, Gio, GLib, Graphene, Gsk, Gtk  # noqa: E402
 
 from . import __version__, blocking  # noqa: E402
 from .a11y import A11y  # noqa: E402
+from .sites import evaluate  # noqa: E402
 from .store import APP_ID, APP_NAME, Config, State, fmt, usage_status  # noqa: E402
 
 REPO_URL = "https://github.com/luiz-nast/maverick"
@@ -99,10 +102,12 @@ class Window(Adw.ApplicationWindow):
         self._block_status = blocking.status()
         self._a11y = A11y()
         self._iface = Gio.Settings.new("org.gnome.desktop.interface")
-        self._limit_timer = 0
+        self._timers: dict = {}
+        self._focus_rows: dict[str, Adw.PreferencesRow] = {}
 
         page = Adw.PreferencesPage()
-        for group in (self._build_hero(), self._build_youtube(), self._build_today(), self._build_sites()):
+        for group in (self._build_hero(), self._build_youtube(), self._build_focus_sites(),
+                      self._build_today(), self._build_sites()):
             page.add(group)
         menu = Gio.Menu()
         menu.append("Sobre o Maverick", "app.about")
@@ -142,6 +147,26 @@ class Window(Adw.ApplicationWindow):
         icon.set_from_icon_name(name)
         icon.set_css_classes([css])
 
+    def _debounce(self, key, fn) -> None:
+        """Grava 1,5 s depois do último clique: passar por um valor menor no caminho
+        não pode baixar o limite de hoje sem querer."""
+        if key in self._timers:
+            GLib.source_remove(self._timers.pop(key))
+
+        def fire() -> bool:
+            self._timers.pop(key, None)
+            fn()
+            return False
+
+        self._timers[key] = GLib.timeout_add(1500, fire)
+
+    def _spin(self, title: str, low: int, high: int, step: int, value: int, commit) -> Adw.SpinRow:
+        row = Adw.SpinRow.new_with_range(low, high, step)
+        row.set_title(title)
+        row.set_value(value)
+        row.connect("notify::value", lambda r, _p: self._debounce(r, lambda: commit(int(r.get_value()))))
+        return row
+
     @staticmethod
     def _action_row(title: str, button_label: str, on_click) -> tuple[Adw.ActionRow, Gtk.Image, Gtk.Button]:
         row, icon = Adw.ActionRow(title=title), Gtk.Image()
@@ -173,10 +198,7 @@ class Window(Adw.ApplicationWindow):
     def _build_youtube(self) -> Adw.PreferencesGroup:
         group = Adw.PreferencesGroup(title="YouTube",
                                      description="Conta só enquanto um vídeo está tocando. Zera à meia-noite.")
-        self.limit_row = Adw.SpinRow.new_with_range(5, 240, 5)
-        self.limit_row.set_title("Limite diário")
-        self.limit_row.set_value(self.config.limit_minutes)
-        self.limit_row.connect("notify::value", self._on_limit_changed)
+        self.limit_row = self._spin("Limite diário", 5, 240, 5, self.config.limit_minutes, self._commit_limit)
         self._update_limit_subtitle()
         self.service_row, self.service_icon, self.service_button = self._action_row(
             "Contador em segundo plano", "Iniciar", self._on_start_service)
@@ -187,6 +209,25 @@ class Window(Adw.ApplicationWindow):
                                           active=self.config.count_private_media)
         self.fallback_row.connect("notify::active", self._on_fallback_toggled)
         for row in (self.limit_row, self.service_row, self.private_row, self.fallback_row):
+            group.add(row)
+        return group
+
+    def _build_focus_sites(self) -> Adw.PreferencesGroup:
+        group = Adw.PreferencesGroup(
+            title="Tempo de tela por site",
+            description="Conta só com o site na aba visível da janela em foco e você presente. "
+                        "Usa a detecção exata (Janela anônima > Ativar).")
+        for domain, rule in self.config.sites.items():
+            if rule["mode"] == "daily":
+                row = self._spin(rule["name"], 5, 240, 5, rule["minutes"],
+                                 lambda v, d=domain: self._commit_site_minutes(d, v))
+            else:
+                row = Adw.ExpanderRow(title=rule["name"])
+                for key, title, high in (("allow_minutes", "Tempo livre (min)", 60),
+                                         ("block_minutes", "Tempo bloqueado (min)", 240)):
+                    row.add_row(self._spin(title, 1, high, 1, rule[key],
+                                           lambda v, d=domain, k=key: self._commit_cycle(d, k, v)))
+            self._focus_rows[domain] = row
             group.add(row)
         return group
 
@@ -217,6 +258,18 @@ class Window(Adw.ApplicationWindow):
         self.sub_label.set_text(f"de {fmt(limit)} · restam {fmt(limit - used)}")
         self.status_pill.set_text(STATUS_TEXT[status])
         self.status_pill.set_css_classes(["status-pill", status])
+
+        now_ts = time.time()
+        for domain, row in self._focus_rows.items():
+            rule = self.config.sites.get(domain)
+            if not rule:
+                continue
+            text = evaluate(self.config, domain, copy.deepcopy(state.sites.get(domain, {})), now_ts, False).summary
+            if rule["mode"] == "cycle":
+                text += f" · ciclo {rule['allow_minutes']} livres / {rule['block_minutes']} bloqueado"
+            elif rule["minutes"] != self.config.site_limit(domain):
+                text += f" · a partir de amanhã: {rule['minutes']} min"
+            row.set_subtitle(text)
 
         top = state.top(5)
         if top != self._top:
@@ -285,23 +338,30 @@ class Window(Adw.ApplicationWindow):
         self.limit_row.set_subtitle(f"Hoje: {today} min · a partir de amanhã: {target} min" if target != today
                                     else "Reduzir vale na hora; aumentar só a partir de amanhã")
 
-    def _on_limit_changed(self, *_args) -> None:
-        # Espera parar de clicar: passar por um valor menor no caminho não pode
-        # baixar o limite de hoje sem querer.
-        if self._limit_timer:
-            GLib.source_remove(self._limit_timer)
-        self._limit_timer = GLib.timeout_add(1500, self._commit_limit)
-
-    def _commit_limit(self) -> bool:
-        self._limit_timer = 0
-        minutes = int(self.limit_row.get_value())
+    def _commit_limit(self, minutes: int) -> None:
         if minutes != Config.load().limit_minutes:
             now = self._edit_config(lambda c: c.set_limit(minutes))
             self._toast(f"Limite de hoje reduzido para {minutes} min" if now else
                         f"{minutes} min a partir de amanhã. Hoje continua {self.config.effective_limit()} min.", 4)
         self._update_limit_subtitle()
         self.refresh_usage()
-        return False
+
+    def _commit_site_minutes(self, domain: str, minutes: int) -> None:
+        rule = Config.load().sites.get(domain)
+        if not rule or minutes == rule["minutes"]:
+            return
+        now = self._edit_config(lambda c: c.set_site_minutes(domain, minutes))
+        self._toast(f"{rule['name']}: {minutes} min por dia, já vale hoje" if now else
+                    f"{rule['name']}: {minutes} min a partir de amanhã. Hoje continua "
+                    f"{self.config.site_limit(domain)} min.", 4)
+        self.refresh_usage()
+
+    def _commit_cycle(self, domain: str, key: str, minutes: int) -> None:
+        rule = Config.load().sites.get(domain)
+        if rule and rule[key] != minutes:
+            self._edit_config(lambda c: c.sites[domain].__setitem__(key, minutes))
+            self._toast(f"{rule['name']}: vale a partir da próxima rodada")
+            self.refresh_usage()
 
     def _on_enable_a11y(self, _btn) -> None:
         self._iface.set_boolean("toolkit-accessibility", True)

@@ -29,6 +29,36 @@ class LimitRuleTest(unittest.TestCase):
         self.assertEqual(c.effective_limit("2026-10-06"), 25)
 
 
+class SiteRuleTest(unittest.TestCase):
+    def test_site_for_url(self):
+        from maverick.sites import site_for_url
+        rules = Config().sites
+        self.assertEqual(site_for_url("https://br.pinterest.com/pin/1/", rules), "pinterest.com")
+        self.assertEqual(site_for_url("https://www.instagram.com/reels/", rules), "instagram.com")
+        self.assertIsNone(site_for_url("https://notinstagram.com/", rules))
+        self.assertIsNone(site_for_url(None, rules))
+
+    def test_daily_site_limit_follows_youtube_rule(self):
+        c = Config()
+        self.assertFalse(c.set_site_minutes("instagram.com", 60, "2026-10-08"))
+        self.assertEqual(c.site_limit("instagram.com", "2026-10-08"), 30)
+        self.assertEqual(c.site_limit("instagram.com", "2026-10-09"), 60)
+        self.assertTrue(c.set_site_minutes("instagram.com", 10, "2026-10-08"))
+        self.assertEqual(c.site_limit("instagram.com", "2026-10-08"), 10)
+
+    def test_cycle_change_applies_next_round(self):
+        from maverick.sites import evaluate
+        c, st = Config(), {}
+        evaluate(c, "pinterest.com", st, 1000.0, count=True)
+        c.sites["pinterest.com"]["allow_minutes"] = 30
+        self.assertEqual(evaluate(c, "pinterest.com", st, 1001.0, count=False).limit, 300)
+
+    def test_day_roll_keeps_cycle(self):
+        s = State(day="1999-01-01", sites={"pinterest.com": {"seconds": 50, "blocked_until": 9e12}})
+        s.roll_day()
+        self.assertEqual(s.sites["pinterest.com"], {"seconds": 0, "blocked_until": 9e12})
+
+
 class StatusTest(unittest.TestCase):
     def test_usage_status(self):
         self.assertEqual(usage_status(10, 600, False, 5), "idle")

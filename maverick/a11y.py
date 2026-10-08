@@ -11,6 +11,9 @@ O Firefox pode deixar a lista de abas parada em janela fora de foco (visto no
 Firefox 156); o título da janela sempre atualiza. Por isso a lista só é usada
 quando a aba selecionada nela bate com o título da janela.
 
+Também diz qual site está na tela: a janela em foco tem o estado ACTIVE, e o
+documento da aba visível (SHOWING) expõe a URL pela interface Document (DocURL).
+
 Exige o navegador no barramento de acessibilidade: no GNOME, `toolkit-accessibility`
 ligado antes de o navegador abrir.
 """
@@ -28,7 +31,7 @@ from .mpris import BROWSERS
 
 ACCESSIBLE = "org.a11y.atspi.Accessible"
 SKIP_ROLES = {"document web", "document frame", "internal frame", "embedded"}  # conteúdo da página
-STATE_SELECTED = 23
+STATE_ACTIVE, STATE_SELECTED, STATE_SHOWING = 1, 23, 25
 TIMEOUT = 1000
 CACHE_SECONDS = 3
 MAX_NODES = 1500
@@ -98,6 +101,7 @@ class A11y:
         self._cache_at = 0.0
         self._cache: list[Window] | None = None
         self._app_names: dict[str, str | None] = {}  # bus -> nome (None = ignorar)
+        self._docs: dict[tuple[str, str], tuple[str, str]] = {}  # janela -> documento visível
 
     def _connect(self) -> Gio.DBusConnection | None:
         if self.conn is None:
@@ -119,6 +123,10 @@ class A11y:
 
     def _role(self, bus: str, path: str) -> str:
         return self._call(bus, path, "GetRoleName", "(s)")
+
+    def _states(self, bus: str, path: str) -> int:
+        words = self._call(bus, path, "GetState", "(au)")
+        return sum(w << (32 * i) for i, w in enumerate(words))
 
     def _name(self, bus: str, path: str) -> str:
         return dbus.get_property(self.conn, bus, path, ACCESSIBLE, "Name", TIMEOUT)
@@ -175,6 +183,46 @@ class A11y:
             self._cache_at = time.monotonic()
         return self._cache
 
+    def focused_url(self) -> str | None:
+        """URL da aba visível na janela de navegador em foco; None se nenhuma estiver em foco."""
+        for _name, bus, path in self._browser_apps():
+            try:
+                frames = self._children(bus, path)
+            except GLib.Error:
+                continue
+            for frame in frames:
+                try:
+                    if self._role(*frame) == "frame" and self._states(*frame) >> STATE_ACTIVE & 1:
+                        return self._showing_url(frame)
+                except GLib.Error:
+                    continue
+        return None
+
+    def _showing_url(self, frame: tuple[str, str]) -> str | None:
+        doc = self._docs.get(frame)
+        if not (doc and self._states(*doc) >> STATE_SHOWING & 1):
+            doc = self._find_showing_doc(frame)
+            if doc is None:
+                return None
+            self._docs[frame] = doc
+        return dbus.call(self.conn, *doc, "org.a11y.atspi.Document", "GetAttributeValue",
+                         GLib.Variant("(s)", ("DocURL",)), "(s)", TIMEOUT)[0] or None
+
+    def _find_showing_doc(self, frame: tuple[str, str]) -> tuple[str, str] | None:
+        queue, visited = [(*frame, 0)], 0
+        while queue and visited < MAX_NODES:
+            b, p, depth = queue.pop(0)
+            visited += 1
+            try:
+                if self._role(b, p) == "document web":
+                    if self._states(b, p) >> STATE_SHOWING & 1:
+                        return b, p
+                elif depth < MAX_DEPTH:
+                    queue.extend((cb, cp, depth + 1) for cb, cp in self._children(b, p))
+            except GLib.Error:
+                continue
+        return None
+
     def private_media_is_youtube(self) -> bool | None:
         windows = self.windows()
         return None if windows is None else private_media_verdict(windows)
@@ -200,5 +248,4 @@ class A11y:
         audio = None
         if len(buttons) >= 2:  # [botão de som, fechar aba]
             audio = "blocked" if buttons[0] in BLOCKED_AUDIO else "playing"
-        state = self._call(bus, path, "GetState", "(au)")
-        return Tab(self._name(bus, path), bool(state and state[0] >> STATE_SELECTED & 1), audio)
+        return Tab(self._name(bus, path), bool(self._states(bus, path) >> STATE_SELECTED & 1), audio)

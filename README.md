@@ -1,13 +1,14 @@
 # Maverick
 
-Maverick is a Linux desktop app with two jobs:
+Maverick is a Linux desktop app with three jobs:
 
 1. **YouTube daily limit.** Counts only the seconds during which a YouTube video is actually playing, as reported by the browser over MPRIS (D-Bus). A paused video or an idle tab costs nothing. At the limit (30 min by default) it pauses the player and shows "Tempo esgotado, volte amanhã" on every play attempt. Resets at local midnight. Raising the limit only takes effect the next day; lowering it takes effect immediately.
-2. **Browser-game site blocking.** Blocks a list of game sites system-wide through `/etc/hosts` plus Firefox and Chrome enterprise policies. Ships with the 10 largest browser-game portals in Brazil and worldwide.
+2. **Focused screen time per site.** Counts the seconds a site is the visible tab of the focused browser window while the user is present. Ships with Instagram at 30 min per day and Pinterest on a cycle of 5 min allowed, 15 min blocked. A blocked site in focus is covered by a full-screen notice.
+3. **Browser-game site blocking.** Blocks a list of game sites system-wide through `/etc/hosts` plus Firefox and Chrome enterprise policies. Ships with the 10 largest browser-game portals in Brazil and worldwide.
 
 | | |
 |---|---|
-| Version | 0.4.2 |
+| Version | 0.5.0 |
 | Language | Python 3.10+, no pip dependencies |
 | UI | GTK 4 + libadwaita (window), GTK 3 (on-screen counter) |
 | Tested on | Ubuntu 26.04, GNOME 50 (Wayland), Firefox 156 (snap) |
@@ -23,9 +24,10 @@ Maverick is a Linux desktop app with two jobs:
 
 | Component | Command / file | Runs as | Purpose |
 |---|---|---|---|
-| Daemon | `maverick daemon`, systemd user unit `maverick.service` | user | Polls MPRIS every second, counts time, pauses at the limit, drives the counter, checks the site block every 60 s |
-| Window | `maverick` (menu entry "Maverick") | user | Today's usage ring, limit setting, private-window detection status with an Enable button, most watched videos, blocked-site list with Apply button |
-| Counter | part of the daemon | user | Always-on-top pill `▶ MM:SS / MM:SS` at the top-right, visible only while a video plays |
+| Daemon | `maverick daemon`, systemd user unit `maverick.service` | user | Every second: YouTube time from MPRIS, focused site time from accessibility, pauses and covers at the limits, drives the counter. Checks the site block every 60 s |
+| Window | `maverick` (menu entry "Maverick") | user | Today's usage ring, YouTube limit, private-window detection status with an Enable button, per-site screen time rules and live status, most watched videos, blocked-site list with Apply button |
+| Counter | part of the daemon | user | Always-on-top pill at the top-right: `▶ MM:SS / MM:SS` while a YouTube video plays, `Instagram MM:SS / MM:SS` while a ruled site is focused |
+| Cover | part of the daemon | user | Full work-area notice shown while a blocked site is the focused tab; hides as soon as another tab or app is focused |
 | Block helper | `/usr/lib/maverick/maverick-blockctl` | root via `pkexec` | Writes `/etc/hosts` and browser policies. Validates every domain |
 
 The window and the daemon share two JSON files. The window writes the config; the daemon reloads it on change, so a new limit applies immediately.
@@ -72,6 +74,33 @@ Every second the daemon lists `org.mpris.MediaPlayer2.*` on the session bus and 
 3. **Fallback.** If no browser is on the accessibility bus, private-window media counts as YouTube when `count_private_media` is `true` (default; switch "Na dúvida, contar como YouTube" in the window). Any media played in a private window is then counted and, after the limit, paused.
 
 `maverick check` prints which layer applies right now.
+
+## Focused screen time per site
+
+### Rules
+
+| Site | Mode | Default | Meaning |
+|---|---|---|---|
+| Instagram (`instagram.com`) | `daily` | 30 min | 30 min of focused time per day. Same limit rule as YouTube: lowering applies now, raising from tomorrow |
+| Pinterest (`pinterest.com`) | `cycle` | 5 / 15 | 5 min of focused time allowed, then 15 min blocked by the clock, then a new 5 min round. Changing either value applies from the next round |
+
+Subdomains match (`br.pinterest.com`, `www.instagram.com`). Rules are edited in the window group "Tempo de tela por site".
+
+### What counts as focused
+
+A second counts for a site when all hold:
+
+1. A browser window is the active (focused) window, read from the AT-SPI `ACTIVE` state of its frame.
+2. The visible tab of that window (document with state `SHOWING`) has a URL on the site, read from the AT-SPI Document attribute `DocURL`.
+3. The user is present: keyboard or mouse input in the last 90 s (GNOME `org.gnome.Mutter.IdleMonitor`), or media from that site is playing.
+
+A tab open in the background, a browser window behind another app, or an unattended screen does not count. Requires the browser on the accessibility bus (see detection layer 2).
+
+### At the limit
+
+- A notification fires once when the site becomes blocked.
+- While the blocked site is the focused tab, a full-screen notice covers the work area with the reason and the time left. It takes no keyboard focus, so Ctrl+Tab or Ctrl+W still work; switching away hides it within a second.
+- Media from that site (or hidden private-window media) is paused.
 
 ## Site blocking
 
@@ -120,8 +149,8 @@ The list lives in `blocked_sites` in the config and can be edited in the window 
 From the release:
 
 ```bash
-wget https://github.com/luiz-nast/maverick/releases/download/v0.4.2/maverick_0.4.2_all.deb
-sudo apt install ./maverick_0.4.2_all.deb
+wget https://github.com/luiz-nast/maverick/releases/download/v0.5.0/maverick_0.5.0_all.deb
+sudo apt install ./maverick_0.5.0_all.deb
 systemctl --user daemon-reload
 systemctl --user enable --now maverick.service
 ```
@@ -157,8 +186,8 @@ Do not start the daemon from an AppArmor-confined process (for example from insi
 maverick                     open the window
 maverick daemon [--debug] [--no-overlay]
                              run the counter in the foreground (the service runs this)
-maverick status              today's total and top 10 videos
-maverick check               MPRIS players, their classification, accessibility bus, block status
+maverick status              YouTube today, top 10 videos, each site's status
+maverick check               MPRIS players, accessibility windows and tabs, focused tab URL, block status
 maverick limit N             set the daily limit; lowering applies now, raising from tomorrow
 maverick reset               zero today's counter
 maverick block list          blocked sites and whether each is applied
@@ -186,7 +215,11 @@ journalctl --user -u maverick -f
   "hide_after_seconds": 2,
   "warn_minutes_left": 5,
   "count_private_media": true,
-  "blocked_sites": ["clickjogos.com.br", "friv.com", "poki.com", "..."]
+  "blocked_sites": ["clickjogos.com.br", "friv.com", "poki.com", "..."],
+  "sites": {
+    "instagram.com": { "name": "Instagram", "mode": "daily", "minutes": 30, "today_cap": null },
+    "pinterest.com": { "name": "Pinterest", "mode": "cycle", "allow_minutes": 5, "block_minutes": 15 }
+  }
 }
 ```
 
@@ -198,24 +231,28 @@ journalctl --user -u maverick -f
 | `warn_minutes_left` | int | 5 | Remaining minutes for the warning notification and yellow counter |
 | `count_private_media` | bool | true | Count hidden-metadata browser media as YouTube when no browser is on the accessibility bus. Also a switch in the window |
 | `blocked_sites` | list of domains | the 12 default domains | Sites to block; applied to the system only via Apply / `maverick block apply` |
+| `sites` | object | Instagram daily 30, Pinterest cycle 5/15 | Focused screen time rules by domain. `daily`: `minutes`, `today_cap`. `cycle`: `allow_minutes`, `block_minutes` |
 
 State: `~/.local/share/maverick/state.json`, written on every counted second and on SIGTERM/SIGINT/SIGHUP.
 
 ```json
-{ "day": "2026-10-04", "seconds": 1134, "per_video": { "<xesam:title>": 512 } }
+{ "day": "2026-10-08", "seconds": 1134, "per_video": { "<xesam:title>": 512 },
+  "sites": { "instagram.com": { "seconds": 754 },
+             "pinterest.com": { "seconds": 300, "round_used": 300, "round_allow": 300, "blocked_until": 1791449000.0 } } }
 ```
 
-A `day` different from today's local date resets `seconds` and `per_video`. The daemon reloads the file when another process changes it (for example `maverick reset`), so external edits are not overwritten by the next counted second.
+A `day` different from today's local date resets `seconds`, `per_video` and each site's `seconds`; the Pinterest cycle (`round_*`, `blocked_until`, a Unix time) follows the clock across midnight. `maverick reset` clears everything for today, the cycle included. The daemon reloads the file when another process changes it (for example `maverick reset`), so external edits are not overwritten by the next counted second.
 
 ## Repository layout
 
 ```
 maverick/__main__.py    CLI and subcommands
-maverick/app.py         daemon loop: classify players, count, warn, pause, overlay, block watch
+maverick/app.py         daemon loop: YouTube and focused-site counting, pause, cover, overlay, block watch
+maverick/sites.py       focused screen time rules: daily and cycle, URL matching, status texts
 maverick/dbus.py        shared synchronous D-Bus helpers (Gio)
 maverick/mpris.py       MPRIS players over D-Bus, Pause()
-maverick/a11y.py        AT-SPI: browser window titles, tabs and tab sound state for private windows
-maverick/overlay.py     GTK 3 always-on-top counter (forces GDK_BACKEND=x11)
+maverick/a11y.py        AT-SPI: window titles, tabs, tab sound state, focused window's visible URL
+maverick/overlay.py     GTK 3 always-on-top counter pill and blocking cover (forces GDK_BACKEND=x11)
 maverick/gui.py         GTK 4 + libadwaita window
 maverick/blocking.py    default site list, domain validation, hosts/policy rendering, status
 maverick/blockctl.py    root helper: writes /etc/hosts and browser policies atomically
@@ -249,6 +286,8 @@ packaging/build-deb.sh                      # build the package
 - Layer 2 is tested against Firefox 156 (snap). Firefox can leave the tab list in the accessibility tree stale for a window that is not in the foreground; the window title stays current, so detection then relies on the selected tab only. A YouTube video playing in a non-selected tab of such a window is not detected.
 - With accessibility on, GTK apps and Firefox maintain accessibility trees, which costs some CPU and memory. Maverick's own window and counter are on that bus too; the scan skips its own process to avoid blocking on itself.
 - A browser with MPRIS disabled (Firefox `media.hardwaremediakeys.enabled = false`) is invisible to the daemon.
+- Focused-site time depends on the browser reporting the `ACTIVE` state of its window over AT-SPI. Electron apps (for example Claude Desktop) do not report it; Firefox is expected to. If a site never counts, `maverick check` shows whether a focused tab is seen.
+- The cover sits over the work area but the browser keeps keyboard focus: keyboard scrolling still moves the hidden page.
 
 ## Troubleshooting
 
@@ -260,4 +299,5 @@ packaging/build-deb.sh                      # build the package
 | Blocked site still opens | Tab opened before the block: reload. Firefox block page: restart Firefox. `maverick block list` shows `✗`: click Apply. |
 | "Bloqueio no sistema indisponível" | Running from source without the package. Install the `.deb`. |
 | Raised the limit, today's did not change | By design: raises apply from tomorrow. `maverick status` shows both values. |
+| Instagram or Pinterest never counts | While the site is focused, `maverick check` must show "Aba visível da janela em foco" with its URL. If it reports no focused window, the browser is not reporting focus. |
 | `Access denied` in logs | Daemon started from a confined process. Use the systemd service. |
