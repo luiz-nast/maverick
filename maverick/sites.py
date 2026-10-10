@@ -1,11 +1,9 @@
-"""Tempo de tela em foco por site (Instagram, Pinterest...).
+"""Tempo de tela em foco por site (Instagram, Pinterest...), em ciclos.
 
 Um segundo conta quando o site está na aba visível da janela de navegador em foco
 e o usuário está presente (mexeu em teclado/mouse há pouco ou há mídia tocando).
-
-- "daily": N minutos por dia; aumentar vale amanhã, reduzir na hora.
-- "cycle": A minutos livres, depois B minutos bloqueado (relógio), e recomeça. Uma
-  mudança de A ou B vale a partir da próxima rodada.
+Cada site tem `allow_minutes` livres em foco, depois `block_minutes` bloqueado no
+relógio, e recomeça. Mudar os valores vale a partir da próxima rodada.
 """
 
 from __future__ import annotations
@@ -33,54 +31,39 @@ def site_for_title(title: str, rules: dict) -> str | None:
 
 @dataclass
 class SiteStatus:
-    domain: str
     name: str
-    mode: str
     blocked: bool
-    used: int  # segundos em foco no período (dia ou rodada)
-    limit: int  # segundos permitidos no período
-    wait: int = 0  # segundos até liberar (ciclo bloqueado)
+    used: int  # segundos em foco na rodada
+    allow: int  # segundos livres da rodada
+    wait: int = 0  # segundos até liberar
 
     @property
     def pill(self) -> str:
-        return f"{self.name} {fmt(self.used)} / {fmt(self.limit)}"
+        return f"{self.name} {fmt(self.used)} / {fmt(self.allow)}"
 
     @property
     def summary(self) -> str:
-        if self.mode == "daily":
-            return (f"Esgotado hoje: {fmt(self.used)} em foco" if self.blocked
-                    else f"Hoje: {fmt(self.used)} de {fmt(self.limit)} em foco")
         return (f"Bloqueado: libera em {fmt(self.wait)}" if self.blocked
-                else f"Livre: {fmt(self.limit - self.used)} restantes nesta rodada")
+                else f"Livre: {fmt(self.allow - self.used)} restantes nesta rodada")
 
     @property
     def block_message(self) -> str:
-        if self.mode == "daily":
-            return f"{self.limit // 60} min de {self.name} já usados hoje. Volta amanhã."
         return f"Pausa do {self.name}: libera em {fmt(self.wait)}."
 
 
 def evaluate(cfg: Config, domain: str, st: dict, now: float, count: bool) -> SiteStatus:
-    """Atualiza `st` (estado do site) e devolve o status. `count`: soma 1 s em foco
-    se o site estiver liberado."""
+    """Atualiza `st` (estado do site) e devolve o status. `count`: soma 1 s em foco se
+    o site estiver liberado; ao fim da rodada começa o bloqueio."""
     rule = cfg.sites[domain]
-    st.setdefault("seconds", 0)
-    if rule["mode"] == "daily":
-        limit = cfg.site_limit(domain) * 60
-        if count and st["seconds"] < limit:
-            st["seconds"] += 1
-        return SiteStatus(domain, rule["name"], "daily", st["seconds"] >= limit, st["seconds"], limit)
-
     if st.get("blocked_until", 0) > now:
         allow = st.get("round_allow", rule["allow_minutes"] * 60)
-        return SiteStatus(domain, rule["name"], "cycle", True, allow, allow, math.ceil(st["blocked_until"] - now))
+        return SiteStatus(rule["name"], True, allow, allow, math.ceil(st["blocked_until"] - now))
     if st.get("blocked_until") or "round_allow" not in st:  # bloqueio acabou ou primeira vez: nova rodada
         st.update(round_used=0, round_allow=rule["allow_minutes"] * 60, blocked_until=0)
     if count:
         st["round_used"] += 1
-        st["seconds"] += 1
+        st["seconds"] = st.get("seconds", 0) + 1
         if st["round_used"] >= st["round_allow"]:
             st["blocked_until"] = now + rule["block_minutes"] * 60
-            return SiteStatus(domain, rule["name"], "cycle", True, st["round_used"], st["round_allow"],
-                              rule["block_minutes"] * 60)
-    return SiteStatus(domain, rule["name"], "cycle", False, st["round_used"], st["round_allow"])
+            return SiteStatus(rule["name"], True, st["round_used"], st["round_allow"], rule["block_minutes"] * 60)
+    return SiteStatus(rule["name"], False, st["round_used"], st["round_allow"])

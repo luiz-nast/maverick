@@ -43,7 +43,7 @@ class StubCover:
         self.visible, self.title = False, None
 
     def show_block(self, title, text):
-        self.visible, self.title = True, title
+        self.visible, self.title, self.text = True, title, text
 
     def hide(self):
         self.visible = False
@@ -134,25 +134,26 @@ class DaemonTest(unittest.TestCase):
         self.assertEqual(a.state.seconds, 1)
         self.assertEqual(appmod.State.load().seconds, 1)
 
-    def test_instagram_daily_counts_only_when_focused_and_present(self):
+    def test_site_counts_only_when_focused_and_present(self):
         a = self.make(limit=30)
-        a.config.sites["instagram.com"]["minutes"] = 1
+        a.config.sites["instagram.com"].update(allow_minutes=1, block_minutes=15)
         a.a11y.url = "https://www.instagram.com/reels/"
         for _ in range(10):
             a.tick()
-        self.assertEqual(a.state.sites["instagram.com"]["seconds"], 10)
+        st = a.state.sites["instagram.com"]
+        self.assertEqual(st["round_used"], 10)
         self.assertTrue(a.overlay.visible)
+        self.assertEqual(a.overlay.last, "Instagram 00:10 / 01:00")
         a.idle_seconds = lambda: 600.0  # saiu do computador, sem mídia
         a.tick()
-        self.assertEqual(a.state.sites["instagram.com"]["seconds"], 10)
+        self.assertEqual(st["round_used"], 10)
         a.idle_seconds = lambda: 0.0
         a.a11y.url = "https://github.com/"  # outra aba em foco
         a.tick()
-        self.assertEqual(a.state.sites["instagram.com"]["seconds"], 10)
+        self.assertEqual(st["round_used"], 10)
         a.a11y.url = "https://www.instagram.com/"
-        for _ in range(60):
+        for _ in range(50):
             a.tick()
-        self.assertEqual(a.state.sites["instagram.com"]["seconds"], 60)
         self.assertTrue(a.cover.visible)
         self.assertEqual(a.cover.title, "Instagram bloqueado")
         a.a11y.url = "https://github.com/"

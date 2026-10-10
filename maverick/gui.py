@@ -215,18 +215,14 @@ class Window(Adw.ApplicationWindow):
     def _build_focus_sites(self) -> Adw.PreferencesGroup:
         group = Adw.PreferencesGroup(
             title="Tempo de tela por site",
-            description="Conta só com o site na aba visível da janela em foco e você presente. "
+            description="Minutos livres com o site na aba visível da janela em foco, depois uma pausa. "
                         "Usa a detecção exata (Janela anônima > Ativar).")
         for domain, rule in self.config.sites.items():
-            if rule["mode"] == "daily":
-                row = self._spin(rule["name"], 5, 240, 5, rule["minutes"],
-                                 lambda v, d=domain: self._commit_site_minutes(d, v))
-            else:
-                row = Adw.ExpanderRow(title=rule["name"])
-                for key, title, high in (("allow_minutes", "Tempo livre (min)", 60),
-                                         ("block_minutes", "Tempo bloqueado (min)", 240)):
-                    row.add_row(self._spin(title, 1, high, 1, rule[key],
-                                           lambda v, d=domain, k=key: self._commit_cycle(d, k, v)))
+            row = Adw.ExpanderRow(title=rule["name"])
+            for key, title, high in (("allow_minutes", "Tempo livre (min)", 60),
+                                     ("block_minutes", "Tempo bloqueado (min)", 240)):
+                row.add_row(self._spin(title, 1, high, 1, rule[key],
+                                       lambda v, d=domain, k=key: self._commit_cycle(d, k, v)))
             self._focus_rows[domain] = row
             group.add(row)
         return group
@@ -264,12 +260,10 @@ class Window(Adw.ApplicationWindow):
             rule = self.config.sites.get(domain)
             if not rule:
                 continue
-            text = evaluate(self.config, domain, copy.deepcopy(state.sites.get(domain, {})), now_ts, False).summary
-            if rule["mode"] == "cycle":
-                text += f" · ciclo {rule['allow_minutes']} livres / {rule['block_minutes']} bloqueado"
-            elif rule["minutes"] != self.config.site_limit(domain):
-                text += f" · a partir de amanhã: {rule['minutes']} min"
-            row.set_subtitle(text)
+            st = copy.deepcopy(state.sites.get(domain, {}))
+            row.set_subtitle(f"{evaluate(self.config, domain, st, now_ts, False).summary} · "
+                             f"ciclo {rule['allow_minutes']}/{rule['block_minutes']} · "
+                             f"hoje {fmt(st.get('seconds', 0))} em foco")
 
         top = state.top(5)
         if top != self._top:
@@ -344,16 +338,6 @@ class Window(Adw.ApplicationWindow):
             self._toast(f"Limite de hoje reduzido para {minutes} min" if now else
                         f"{minutes} min a partir de amanhã. Hoje continua {self.config.effective_limit()} min.", 4)
         self._update_limit_subtitle()
-        self.refresh_usage()
-
-    def _commit_site_minutes(self, domain: str, minutes: int) -> None:
-        rule = Config.load().sites.get(domain)
-        if not rule or minutes == rule["minutes"]:
-            return
-        now = self._edit_config(lambda c: c.set_site_minutes(domain, minutes))
-        self._toast(f"{rule['name']}: {minutes} min por dia, já vale hoje" if now else
-                    f"{rule['name']}: {minutes} min a partir de amanhã. Hoje continua "
-                    f"{self.config.site_limit(domain)} min.", 4)
         self.refresh_usage()
 
     def _commit_cycle(self, domain: str, key: str, minutes: int) -> None:

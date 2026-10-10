@@ -100,7 +100,7 @@ class App:
         before = st.get("seconds", 0)
         status = evaluate(self.config, domain, st, time.time(),
                           count=bool(site_media) or self.idle_seconds() < IDLE_SECONDS)
-        if st["seconds"] != before:
+        if st.get("seconds", 0) != before:
             self._save_state()
         if not status.blocked:
             self._sites_blocked.discard(domain)
@@ -174,7 +174,7 @@ class App:
         if now >= self._visible_until:
             self.overlay.hide()
         elif site:
-            self.overlay.show_message(site.pill, "warning" if site.limit - site.used <= 60 else "playing")
+            self.overlay.show_message(site.pill, "warning" if site.allow - site.used <= 60 else "playing")
         elif self.over_limit:
             self.overlay.show_message(TIME_UP, "blocked")
         else:

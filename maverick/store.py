@@ -34,19 +34,12 @@ def mtime(path: Path) -> float:
         return 0.0
 
 
-# Tempo de tela em foco por site. "daily": minutos por dia; "cycle": minutos livres,
-# depois minutos bloqueado, e recomeça.
+# Tempo de tela em foco por site: `allow_minutes` livres, depois `block_minutes`
+# bloqueado, e recomeça (ver sites.py).
 DEFAULT_SITE_RULES = {
-    "instagram.com": {"name": "Instagram", "mode": "daily", "minutes": 30},
-    "pinterest.com": {"name": "Pinterest", "mode": "cycle", "allow_minutes": 5, "block_minutes": 15},
+    "instagram.com": {"name": "Instagram", "allow_minutes": 5, "block_minutes": 15},
+    "pinterest.com": {"name": "Pinterest", "allow_minutes": 5, "block_minutes": 15},
 }
-
-
-def capped_limit(minutes: int, cap: dict | None, today: str) -> int:
-    """Limite de hoje: o teto do dia vale se for de hoje (aumentos só valem amanhã)."""
-    if cap and cap.get("day") == today and isinstance(cap.get("minutes"), int):
-        return min(minutes, cap["minutes"])
-    return minutes
 
 
 def usage_status(used: int, limit: int, playing: bool, warn_minutes: int) -> str:
@@ -92,16 +85,19 @@ class Config:
     def load(cls) -> "Config":
         cfg = _load(cls, CONFIG_FILE)
         cfg.blocked_sites = list(dict.fromkeys(d for d in map(normalize_domain, cfg.blocked_sites) if d))
-        cfg.sites = {d: r for d, r in (cfg.sites or {}).items()
-                     if isinstance(r, dict) and r.get("mode") in ("daily", "cycle")}
+        cfg.sites = {d: r for d, r in (cfg.sites or {}).items() if isinstance(r, dict)
+                     and all(isinstance(r.get(k), int) and r[k] > 0 for k in ("allow_minutes", "block_minutes"))}
         return cfg
 
     def save(self) -> None:
         _save(self, CONFIG_FILE)
 
     def effective_limit(self, today: str | None = None) -> int:
-        """Limite do YouTube em minutos que vale hoje."""
-        return capped_limit(self.limit_minutes, self.today_cap, today or today_iso())
+        """Limite do YouTube em minutos que vale hoje: o teto do dia, se for de hoje."""
+        cap = self.today_cap or {}
+        if cap.get("day") == (today or today_iso()) and isinstance(cap.get("minutes"), int):
+            return min(self.limit_minutes, cap["minutes"])
+        return self.limit_minutes
 
     def set_limit(self, minutes: int, today: str | None = None) -> bool:
         """Reduzir vale na hora; aumentar só amanhã. True se já vale hoje."""
@@ -109,19 +105,6 @@ class Config:
         current = self.effective_limit(today)
         self.today_cap = {"day": today, "minutes": min(current, minutes)}
         self.limit_minutes = minutes
-        return minutes <= current
-
-    def site_limit(self, domain: str, today: str | None = None) -> int:
-        """Limite diário de hoje (minutos) de um site em modo "daily"."""
-        rule = self.sites[domain]
-        return capped_limit(rule["minutes"], rule.get("today_cap"), today or today_iso())
-
-    def set_site_minutes(self, domain: str, minutes: int, today: str | None = None) -> bool:
-        """Mesma regra do YouTube para o limite diário de um site."""
-        today = today or today_iso()
-        rule, current = self.sites[domain], self.site_limit(domain, today)
-        rule["today_cap"] = {"day": today, "minutes": min(current, minutes)}
-        rule["minutes"] = minutes
         return minutes <= current
 
 
