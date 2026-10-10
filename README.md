@@ -8,7 +8,7 @@ Maverick is a Linux desktop app with three jobs:
 
 | | |
 |---|---|
-| Version | 0.5.0 |
+| Version | 0.5.1 |
 | Language | Python 3.10+, no pip dependencies |
 | UI | GTK 4 + libadwaita (window), GTK 3 (on-screen counter) |
 | Tested on | Ubuntu 26.04, GNOME 50 (Wayland), Firefox 156 (snap) |
@@ -91,7 +91,7 @@ Subdomains match (`br.pinterest.com`, `www.instagram.com`). Rules are edited in 
 A second counts for a site when all hold:
 
 1. A browser window is the active (focused) window, read from the AT-SPI `ACTIVE` state of its frame.
-2. The visible tab of that window (document with state `SHOWING`) has a URL on the site, read from the AT-SPI Document attribute `DocURL`.
+2. The visible tab of that window is on the site. The window title gives the visible tab's title; the document whose name equals that title gives the URL through the AT-SPI Document attribute `DocURL`. The documents' `SHOWING` state is not used: Firefox 156 leaves it stale after tab switches. If no document matches yet, the site name as a word in the tab title decides (`(3) Instagram`, `Pin em ... | Pinterest`).
 3. The user is present: keyboard or mouse input in the last 90 s (GNOME `org.gnome.Mutter.IdleMonitor`), or media from that site is playing.
 
 A tab open in the background, a browser window behind another app, or an unattended screen does not count. Requires the browser on the accessibility bus (see detection layer 2).
@@ -149,8 +149,8 @@ The list lives in `blocked_sites` in the config and can be edited in the window 
 From the release:
 
 ```bash
-wget https://github.com/luiz-nast/maverick/releases/download/v0.5.0/maverick_0.5.0_all.deb
-sudo apt install ./maverick_0.5.0_all.deb
+wget https://github.com/luiz-nast/maverick/releases/download/v0.5.1/maverick_0.5.1_all.deb
+sudo apt install ./maverick_0.5.1_all.deb
 systemctl --user daemon-reload
 systemctl --user enable --now maverick.service
 ```
@@ -286,7 +286,7 @@ packaging/build-deb.sh                      # build the package
 - Layer 2 is tested against Firefox 156 (snap). Firefox can leave the tab list in the accessibility tree stale for a window that is not in the foreground; the window title stays current, so detection then relies on the selected tab only. A YouTube video playing in a non-selected tab of such a window is not detected.
 - With accessibility on, GTK apps and Firefox maintain accessibility trees, which costs some CPU and memory. Maverick's own window and counter are on that bus too; the scan skips its own process to avoid blocking on itself.
 - A browser with MPRIS disabled (Firefox `media.hardwaremediakeys.enabled = false`) is invisible to the daemon.
-- Focused-site time depends on the browser reporting the `ACTIVE` state of its window over AT-SPI. Electron apps (for example Claude Desktop) do not report it; Firefox is expected to. If a site never counts, `maverick check` shows whether a focused tab is seen.
+- Focused-site time depends on the browser reporting the `ACTIVE` state of its window over AT-SPI. Firefox 156 does (verified live); Electron apps (for example Claude Desktop) do not. If a site never counts, `maverick check` shows whether a focused tab is seen.
 - The cover sits over the work area but the browser keeps keyboard focus: keyboard scrolling still moves the hidden page.
 
 ## Troubleshooting

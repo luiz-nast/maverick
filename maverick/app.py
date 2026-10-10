@@ -14,7 +14,7 @@ from gi.repository import GLib
 from . import blocking, dbus
 from .a11y import A11y
 from .mpris import Mpris, Player
-from .sites import SiteStatus, evaluate, site_for_url
+from .sites import SiteStatus, evaluate, site_for_title, site_for_url
 from .store import APP_ID, APP_NAME, CONFIG_FILE, STATE_FILE, Config, State, fmt, mtime, usage_status
 
 log = logging.getLogger("maverick")
@@ -85,7 +85,11 @@ class App:
 
     def tick_site(self, players: list[Player]) -> SiteStatus | None:
         """Soma 1 s ao site com regra que está em foco e devolve o status dele."""
-        domain = site_for_url(self.a11y.focused_url(), self.config.sites)
+        tab = self.a11y.focused_tab()
+        domain = None
+        if tab:
+            title, url = tab
+            domain = site_for_url(url, self.config.sites) if url else site_for_title(title, self.config.sites)
         if domain != self._focused_site:
             log.info("Site em foco: %s", domain or "nenhum com regra")
             self._focused_site = domain

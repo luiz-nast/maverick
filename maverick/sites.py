@@ -11,6 +11,7 @@ e o usuário está presente (mexeu em teclado/mouse há pouco ou há mídia toca
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -21,6 +22,13 @@ def site_for_url(url: str | None, domains) -> str | None:
     """Domínio com regra que corresponde à URL (subdomínios incluídos)."""
     host = (urlparse(url).hostname or "") if url else ""
     return next((d for d in domains if host == d or host.endswith("." + d)), None)
+
+
+def site_for_title(title: str, rules: dict) -> str | None:
+    """Plano B sem URL: o nome do site como palavra no título da aba ("(3) Instagram",
+    "Pin em ... | Pinterest")."""
+    return next((d for d, r in rules.items()
+                 if re.search(rf"(^|\W){re.escape(r['name'].lower())}(\W|$)", title.lower())), None)
 
 
 @dataclass

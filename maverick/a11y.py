@@ -11,8 +11,10 @@ O Firefox pode deixar a lista de abas parada em janela fora de foco (visto no
 Firefox 156); o título da janela sempre atualiza. Por isso a lista só é usada
 quando a aba selecionada nela bate com o título da janela.
 
-Também diz qual site está na tela: a janela em foco tem o estado ACTIVE, e o
-documento da aba visível (SHOWING) expõe a URL pela interface Document (DocURL).
+Também diz qual site está na tela: a janela em foco tem o estado ACTIVE e o título
+dela traz a aba visível. O estado SHOWING dos documentos fica parado depois de trocar
+de aba (visto no Firefox 156), então o documento é achado pelo nome, que acompanha o
+título da página, e a URL vem da interface Document (DocURL).
 
 Exige o navegador no barramento de acessibilidade: no GNOME, `toolkit-accessibility`
 ligado antes de o navegador abrir.
@@ -31,7 +33,7 @@ from .mpris import BROWSERS
 
 ACCESSIBLE = "org.a11y.atspi.Accessible"
 SKIP_ROLES = {"document web", "document frame", "internal frame", "embedded"}  # conteúdo da página
-STATE_ACTIVE, STATE_SELECTED, STATE_SHOWING = 1, 23, 25
+STATE_ACTIVE, STATE_SELECTED = 1, 23
 TIMEOUT = 1000
 CACHE_SECONDS = 3
 MAX_NODES = 1500
@@ -101,7 +103,7 @@ class A11y:
         self._cache_at = 0.0
         self._cache: list[Window] | None = None
         self._app_names: dict[str, str | None] = {}  # bus -> nome (None = ignorar)
-        self._docs: dict[tuple[str, str], tuple[str, str]] = {}  # janela -> documento visível
+        self._docs: dict[tuple[str, str], tuple[str, str]] = {}  # janela -> documento da aba visível
 
     def _connect(self) -> Gio.DBusConnection | None:
         if self.conn is None:
@@ -183,8 +185,9 @@ class A11y:
             self._cache_at = time.monotonic()
         return self._cache
 
-    def focused_url(self) -> str | None:
-        """URL da aba visível na janela de navegador em foco; None se nenhuma estiver em foco."""
+    def focused_tab(self) -> tuple[str, str | None] | None:
+        """(título, URL) da aba visível na janela de navegador em foco; None se nenhuma
+        janela de navegador estiver em foco. A URL é None se o documento não for achado."""
         for _name, bus, path in self._browser_apps():
             try:
                 frames = self._children(bus, path)
@@ -193,29 +196,35 @@ class A11y:
             for frame in frames:
                 try:
                     if self._role(*frame) == "frame" and self._states(*frame) >> STATE_ACTIVE & 1:
-                        return self._showing_url(frame)
+                        title = selected_title(self._name(*frame)).strip()
+                        return title, self._url_for(frame, title) if title else None
                 except GLib.Error:
                     continue
         return None
 
-    def _showing_url(self, frame: tuple[str, str]) -> str | None:
+    def focused_url(self) -> str | None:
+        tab = self.focused_tab()
+        return tab[1] if tab else None
+
+    def _url_for(self, frame: tuple[str, str], title: str) -> str | None:
         doc = self._docs.get(frame)
-        if not (doc and self._states(*doc) >> STATE_SHOWING & 1):
-            doc = self._find_showing_doc(frame)
+        if not (doc and self._name(*doc).strip() == title):
+            doc = self._find_doc(frame, title)
             if doc is None:
                 return None
             self._docs[frame] = doc
         return dbus.call(self.conn, *doc, "org.a11y.atspi.Document", "GetAttributeValue",
                          GLib.Variant("(s)", ("DocURL",)), "(s)", TIMEOUT)[0] or None
 
-    def _find_showing_doc(self, frame: tuple[str, str]) -> tuple[str, str] | None:
+    def _find_doc(self, frame: tuple[str, str], title: str) -> tuple[str, str] | None:
+        """Documento cujo nome é o título da aba visível."""
         queue, visited = [(*frame, 0)], 0
         while queue and visited < MAX_NODES:
             b, p, depth = queue.pop(0)
             visited += 1
             try:
                 if self._role(b, p) == "document web":
-                    if self._states(b, p) >> STATE_SHOWING & 1:
+                    if self._name(b, p).strip() == title:
                         return b, p
                 elif depth < MAX_DEPTH:
                     queue.extend((cb, cp, depth + 1) for cb, cp in self._children(b, p))

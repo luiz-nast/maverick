@@ -56,8 +56,8 @@ class FakeA11y:
     def private_media_is_youtube(self):
         return self.verdict
 
-    def focused_url(self):
-        return self.url
+    def focused_tab(self):
+        return ("aba", self.url) if self.url else None
 
 
 class DaemonTest(unittest.TestCase):

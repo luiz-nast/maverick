@@ -38,6 +38,13 @@ class SiteRuleTest(unittest.TestCase):
         self.assertIsNone(site_for_url("https://notinstagram.com/", rules))
         self.assertIsNone(site_for_url(None, rules))
 
+    def test_site_for_title_fallback(self):
+        from maverick.sites import site_for_title
+        rules = Config().sites
+        self.assertEqual(site_for_title("(3) Instagram", rules), "instagram.com")
+        self.assertEqual(site_for_title("Pin em Receitas | Pinterest", rules), "pinterest.com")
+        self.assertIsNone(site_for_title("Instagrammable places - YouTube", rules))
+
     def test_daily_site_limit_follows_youtube_rule(self):
         c = Config()
         self.assertFalse(c.set_site_minutes("instagram.com", 60, "2026-10-08"))
