@@ -8,7 +8,7 @@ Maverick is a Linux desktop app with three jobs:
 
 | | |
 |---|---|
-| Version | 0.5.2 |
+| Version | 0.5.3 |
 | Language | Python 3.10+, no pip dependencies |
 | UI | GTK 4 + libadwaita (window), GTK 3 (on-screen counter) |
 | Tested on | Ubuntu 26.04, GNOME 50 (Wayland), Firefox 156 (snap) |
@@ -151,8 +151,8 @@ The list lives in `blocked_sites` in the config and can be edited in the window 
 From the release:
 
 ```bash
-wget https://github.com/luiz-nast/maverick/releases/download/v0.5.2/maverick_0.5.2_all.deb
-sudo apt install ./maverick_0.5.2_all.deb
+wget https://github.com/luiz-nast/maverick/releases/download/v0.5.3/maverick_0.5.3_all.deb
+sudo apt install ./maverick_0.5.3_all.deb
 systemctl --user daemon-reload
 systemctl --user enable --now maverick.service
 ```

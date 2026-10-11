@@ -199,6 +199,7 @@ class A11y:
                         title = selected_title(self._name(*frame)).strip()
                         return title, self._url_for(frame, title) if title else None
                 except GLib.Error:
+                    self._docs.pop(frame, None)
                     continue
         return None
 
@@ -208,9 +209,14 @@ class A11y:
 
     def _url_for(self, frame: tuple[str, str], title: str) -> str | None:
         doc = self._docs.get(frame)
-        if not (doc and self._name(*doc).strip() == title):
+        try:
+            fresh = doc is not None and self._name(*doc).strip() == title
+        except GLib.Error:
+            fresh = False  # o Firefox recriou o documento (recarga, navegação, aba fechada)
+        if not fresh:
             doc = self._find_doc(frame, title)
             if doc is None:
+                self._docs.pop(frame, None)
                 return None
             self._docs[frame] = doc
         return dbus.call(self.conn, *doc, "org.a11y.atspi.Document", "GetAttributeValue",
