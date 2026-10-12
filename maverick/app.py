@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import logging
 import signal
-import subprocess
 import time
 
 from gi.repository import GLib
@@ -21,17 +20,33 @@ log = logging.getLogger("maverick")
 BLOCK_CHECK_SECONDS = 60
 IDLE_SECONDS = 90  # sem teclado/mouse por mais que isso e sem mídia: ausente, não conta
 TIME_UP = "⛔ Tempo esgotado, volte amanhã"
+NOTIFY_SECONDS = 2
+_NOTIFY = ("org.freedesktop.Notifications", "/org/freedesktop/Notifications", "org.freedesktop.Notifications")
 
 
-def notify(summary: str, body: str = "", urgency: str = "normal") -> None:
-    """Aviso rápido: some sozinho e não fica guardado na central de notificações.
-    `critical` fica fixo até ser dispensado (só para o bloqueio de sites desfeito)."""
-    transient = [] if urgency == "critical" else ["-t", "2000", "--hint=int:transient:1"]
+def notify(summary: str, body: str = "", critical: bool = False) -> None:
+    """Notificação do sistema. Normal: o Maverick a fecha depois de NOTIFY_SECONDS (o GNOME
+    ignora o tempo pedido e deixa o balão na tela até haver atividade) e ela não fica na
+    central. Crítica: fica até ser dispensada."""
+    hints = {"urgency": GLib.Variant("y", 2 if critical else 1)}
+    if not critical:
+        hints["transient"] = GLib.Variant("b", True)
     try:
-        subprocess.Popen(["notify-send", "-a", APP_NAME, "-i", APP_ID, "-u", urgency, *transient, summary, body],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except OSError:
+        bus = dbus.session()
+        nid = dbus.call(bus, *_NOTIFY, "Notify", GLib.Variant(
+            "(susssasa{sv}i)", (APP_NAME, 0, APP_ID, summary, body, [], hints, -1)), "(u)")[0]
+    except GLib.Error:
+        return
+    if not critical:
+        GLib.timeout_add_seconds(NOTIFY_SECONDS, _close_notification, bus, nid)
+
+
+def _close_notification(bus, nid: int) -> bool:
+    try:
+        dbus.call(bus, *_NOTIFY, "CloseNotification", GLib.Variant("(u)", (nid,)))
+    except GLib.Error:
         pass
+    return False
 
 
 class App:
@@ -191,7 +206,7 @@ class App:
         if missing and not self._block_warned:
             log.warning("Bloqueio de sites incompleto: %s", ", ".join(missing))
             notify("Bloqueio de sites desativado",
-                   f"{len(missing)} site(s) fora do bloqueio. Abra o Maverick e clique em Aplicar.", "critical")
+                   f"{len(missing)} site(s) fora do bloqueio. Abra o Maverick e clique em Aplicar.", critical=True)
         self._block_warned = bool(missing)
         return True
 

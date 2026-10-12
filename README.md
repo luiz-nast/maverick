@@ -8,7 +8,7 @@ Maverick is a Linux desktop app with three jobs:
 
 | | |
 |---|---|
-| Version | 0.5.4 |
+| Version | 0.5.5 |
 | Language | Python 3.10+, no pip dependencies |
 | UI | GTK 4 + libadwaita (window), GTK 3 (on-screen counter) |
 | Tested on | Ubuntu 26.04, GNOME 50 (Wayland), Firefox 156 (snap) |
@@ -46,7 +46,7 @@ The window and the daemon share two JSON files. The window writes the config; th
 | Two YouTube tabs in the same Firefox process | counted once | as above |
 | Reboot, logout, service restart | state persists; only a date change resets it | — |
 
-Notifications: one at `warn_minutes_left`, one when the limit is reached. Time notifications are transient pop-ups (normal urgency, `transient` hint, 2 s expire time requested): they disappear by themselves and are not kept in the notification list. Only the warning that the site block was removed is critical and stays until dismissed.
+Notifications: one at `warn_minutes_left`, one when the limit is reached. Notifications go straight to `org.freedesktop.Notifications` over D-Bus. Time notifications have normal urgency and the `transient` hint, and Maverick closes them itself after 2 s with `CloseNotification`, because GNOME ignores the requested expire time and keeps a banner up until there is user activity. They are not kept in the notification list. Only the warning that the site block was removed is critical and stays until dismissed.
 
 ### Limit changes
 
@@ -151,8 +151,8 @@ The list lives in `blocked_sites` in the config and can be edited in the window 
 From the release:
 
 ```bash
-wget https://github.com/luiz-nast/maverick/releases/download/v0.5.4/maverick_0.5.4_all.deb
-sudo apt install ./maverick_0.5.4_all.deb
+wget https://github.com/luiz-nast/maverick/releases/download/v0.5.5/maverick_0.5.5_all.deb
+sudo apt install ./maverick_0.5.5_all.deb
 systemctl --user daemon-reload
 systemctl --user enable --now maverick.service
 ```
@@ -177,7 +177,7 @@ Installed paths:
 | `/usr/share/icons/hicolor/scalable/apps/io.github.luiz_nast.Maverick.svg` | icon |
 | `/usr/share/polkit-1/actions/io.github.luiz_nast.Maverick.policy` | polkit action |
 
-Dependencies: `python3`, `python3-gi`, `gir1.2-gtk-3.0`, `gir1.2-gtk-4.0`, `gir1.2-adw-1 (>= 1.5)`, `libnotify-bin`, `pkexec`.
+Dependencies: `python3`, `python3-gi`, `gir1.2-gtk-3.0`, `gir1.2-gtk-4.0`, `gir1.2-adw-1 (>= 1.5)`, `pkexec`.
 
 Uninstall: `sudo apt remove maverick`.
 

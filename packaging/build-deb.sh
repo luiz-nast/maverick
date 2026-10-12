@@ -33,7 +33,7 @@ Section: utils
 Priority: optional
 Architecture: all
 Installed-Size: $SIZE
-Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-3.0, gir1.2-gtk-4.0, gir1.2-adw-1 (>= 1.5), libnotify-bin, pkexec | policykit-1
+Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-3.0, gir1.2-gtk-4.0, gir1.2-adw-1 (>= 1.5), pkexec | policykit-1
 Maintainer: Luiz Felipe Nast <luizfelipenast@gmail.com>
 Homepage: https://github.com/luiz-nast/maverick
 Description: Limite diário de YouTube e bloqueio de sites de jogos
