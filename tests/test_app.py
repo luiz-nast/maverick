@@ -28,8 +28,9 @@ class StubOverlay:
     def __init__(self):
         self.visible, self.last = False, None
 
-    def update(self, used, limit, state):
-        self.visible, self.last = True, state
+    @staticmethod
+    def text(used, limit, state):
+        return f"{state} {used}/{limit}"
 
     def show_message(self, text, state):
         self.visible, self.last = True, text
@@ -159,6 +160,17 @@ class DaemonTest(unittest.TestCase):
         a.a11y.url = "https://github.com/"
         a.tick()
         self.assertFalse(a.cover.visible)
+
+    def test_leaving_site_keeps_its_pill_even_with_youtube_exhausted(self):
+        a = self.make(limit=1)
+        a.state.seconds = 60  # YouTube esgotado hoje
+        a.a11y.url = "https://www.instagram.com/"
+        a.tick()
+        self.assertTrue(a.overlay.last.startswith("Instagram"))
+        a.a11y.url = "https://github.com/"  # saiu da aba: segundos finais
+        a.tick()
+        self.assertTrue(a.overlay.visible)
+        self.assertTrue(a.overlay.last.startswith("Instagram"))
 
     def test_pinterest_cycle(self):
         a = self.make(limit=30)

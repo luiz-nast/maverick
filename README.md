@@ -8,7 +8,7 @@ Maverick is a Linux desktop app with three jobs:
 
 | | |
 |---|---|
-| Version | 0.5.3 |
+| Version | 0.5.4 |
 | Language | Python 3.10+, no pip dependencies |
 | UI | GTK 4 + libadwaita (window), GTK 3 (on-screen counter) |
 | Tested on | Ubuntu 26.04, GNOME 50 (Wayland), Firefox 156 (snap) |
@@ -38,7 +38,7 @@ The window and the daemon share two JSON files. The window writes the config; th
 |---|---|---|
 | YouTube tab open, video paused | no | hidden |
 | Video playing, tab visible or in background | yes, 1 s per second | `▶ MM:SS / MM:SS`, green |
-| Video stops | no | stays 2 s, then hides |
+| Video stops | no | stays 2 s with its last content, then hides |
 | 5 min or less left | yes | yellow |
 | Limit reached, play pressed | no; player paused within 1 s | `⛔ Tempo esgotado, volte amanhã` for 2 s |
 | Other site playing media (Pinterest, Spotify Web) in a normal window | no | hidden |
@@ -46,7 +46,7 @@ The window and the daemon share two JSON files. The window writes the config; th
 | Two YouTube tabs in the same Firefox process | counted once | as above |
 | Reboot, logout, service restart | state persists; only a date change resets it | — |
 
-Notifications: one at `warn_minutes_left`, one when the limit is reached.
+Notifications: one at `warn_minutes_left`, one when the limit is reached. Time notifications are transient pop-ups (normal urgency, `transient` hint, 2 s expire time requested): they disappear by themselves and are not kept in the notification list. Only the warning that the site block was removed is critical and stays until dismissed.
 
 ### Limit changes
 
@@ -151,8 +151,8 @@ The list lives in `blocked_sites` in the config and can be edited in the window 
 From the release:
 
 ```bash
-wget https://github.com/luiz-nast/maverick/releases/download/v0.5.3/maverick_0.5.3_all.deb
-sudo apt install ./maverick_0.5.3_all.deb
+wget https://github.com/luiz-nast/maverick/releases/download/v0.5.4/maverick_0.5.4_all.deb
+sudo apt install ./maverick_0.5.4_all.deb
 systemctl --user daemon-reload
 systemctl --user enable --now maverick.service
 ```

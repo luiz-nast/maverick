@@ -103,8 +103,9 @@ class Overlay(_TopWindow):
         area = _workarea()
         self.move(area.x + area.width - self.get_size()[0] - MARGIN, area.y + MARGIN)
 
-    def update(self, used: int, limit: int, state: str) -> None:
-        self.show_message(f"{ICONS[state]} {fmt(used)} / {fmt(limit)}", state)
+    @staticmethod
+    def text(used: int, limit: int, state: str) -> str:
+        return f"{ICONS[state]} {fmt(used)} / {fmt(limit)}"
 
     def show_message(self, text: str, state: str) -> None:
         self.label.set_text(text)

@@ -24,8 +24,11 @@ TIME_UP = "⛔ Tempo esgotado, volte amanhã"
 
 
 def notify(summary: str, body: str = "", urgency: str = "normal") -> None:
+    """Aviso rápido: some sozinho e não fica guardado na central de notificações.
+    `critical` fica fixo até ser dispensado (só para o bloqueio de sites desfeito)."""
+    transient = [] if urgency == "critical" else ["-t", "2000", "--hint=int:transient:1"]
     try:
-        subprocess.Popen(["notify-send", "-a", APP_NAME, "-i", APP_ID, "-u", urgency, summary, body],
+        subprocess.Popen(["notify-send", "-a", APP_NAME, "-i", APP_ID, "-u", urgency, *transient, summary, body],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except OSError:
         pass
@@ -47,6 +50,7 @@ class App:
         self._block_warned = False
         self._last_status = None
         self._visible_until = 0.0
+        self._pill = ("", "idle")  # o que a pílula mostra; fica igual nos segundos finais
 
     @property
     def limit_seconds(self) -> int:
@@ -109,7 +113,7 @@ class App:
             self._sites_blocked.add(domain)
             self._save_state()
             log.info("%s bloqueado: %s", status.name, status.block_message)
-            notify(f"{status.name} bloqueado", status.block_message, "critical")
+            notify(f"{status.name} bloqueado", status.block_message)
         for p in site_media:
             self.mpris.pause(p)
         return status
@@ -151,8 +155,7 @@ class App:
     def _notify_thresholds(self) -> None:
         left = self.limit_seconds - self.state.seconds
         if left <= 0:
-            notify("YouTube: limite de hoje atingido",
-                   f"{self.config.effective_limit()} min usados. Volta amanhã.", "critical")
+            notify("YouTube: limite de hoje atingido", f"{self.config.effective_limit()} min usados. Volta amanhã.")
         elif not self._warned and left <= self.config.warn_minutes_left * 60:
             self._warned = True
             notify("YouTube: quase no limite", f"Faltam {fmt(left)} para hoje.")
@@ -169,16 +172,17 @@ class App:
             return
         self.cover.hide()
         now = time.monotonic()
-        if playing or site:
+        if site:
+            self._pill = (site.pill, "warning" if site.allow - site.used <= 60 else "playing")
+        elif playing:
+            self._pill = ((TIME_UP, "blocked") if self.over_limit else
+                          (self.overlay.text(self.state.seconds, self.limit_seconds, status), status))
+        if site or playing:
             self._visible_until = now + self.config.hide_after_seconds
         if now >= self._visible_until:
             self.overlay.hide()
-        elif site:
-            self.overlay.show_message(site.pill, "warning" if site.allow - site.used <= 60 else "playing")
-        elif self.over_limit:
-            self.overlay.show_message(TIME_UP, "blocked")
         else:
-            self.overlay.update(self.state.seconds, self.limit_seconds, status)
+            self.overlay.show_message(*self._pill)
 
     def _check_block(self) -> bool:
         """Avisa uma vez se algum site da lista saiu do /etc/hosts."""
