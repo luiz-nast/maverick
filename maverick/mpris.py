@@ -3,12 +3,17 @@
 Firefox e Chrome publicam a mídia da página como um player MPRIS. PlaybackStatus
 diz se está tocando de fato; os metadados (xesam:url no Firefox, mpris:artUrl no
 Chrome) dizem se é YouTube. Em janela privada os metadados vêm vazios.
+
+Vídeo do YouTube embutido em outra página (prévia na busca do Google, DuckDuckGo)
+chega com a URL da página. O vídeo aparece nela mesmo assim: o Google põe o ID no
+fragmento (`#...vid:v12vqnb0dAE`), outros levam o link do YouTube nos parâmetros.
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from urllib.parse import unquote
 
 from gi.repository import GLib
 
@@ -20,6 +25,10 @@ PLAYER = "org.mpris.MediaPlayer2.Player"
 BROWSERS = ("firefox", "chrom", "brave", "vivaldi", "opera", "edge")
 YOUTUBE_RE = re.compile(
     r"(^|[./])(youtube\.com|youtu\.be|youtube-nocookie\.com|ytimg\.com|googlevideo\.com)(/|$)", re.IGNORECASE
+)
+# YouTube citado dentro da URL de outra página (já decodificada).
+EMBEDDED_YOUTUBE_RE = re.compile(
+    r"youtube(-nocookie)?\.com/(watch|embed|shorts|live)\b|youtu\.be/[\w-]{11}|[#&,]vid:[\w-]{11}(?![\w-])", re.IGNORECASE
 )
 
 
@@ -37,7 +46,9 @@ class Player:
 
     @property
     def is_youtube(self) -> bool:
-        return any(YOUTUBE_RE.search(u) for u in (self.url, self.art_url) if u)
+        if any(YOUTUBE_RE.search(u) for u in (self.url, self.art_url) if u):
+            return True
+        return bool(self.url and EMBEDDED_YOUTUBE_RE.search(unquote(unquote(self.url))))
 
     @property
     def metadata_hidden(self) -> bool:
