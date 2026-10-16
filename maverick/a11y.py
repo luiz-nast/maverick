@@ -23,6 +23,7 @@ ligado antes de o navegador abrir.
 from __future__ import annotations
 
 import os
+import re
 import time
 from dataclasses import dataclass
 
@@ -45,9 +46,13 @@ BLOCKED_AUDIO = {"reproduzir som na aba", "play tab", "reproducir pestaña", "li
 TITLE_SUFFIXES = (" — Mozilla Firefox", " - Mozilla Firefox", " - Google Chrome", " - Chromium", " - Brave")
 
 
+_YOUTUBE_SEGMENT = re.compile(r"(^|\s-\s)youtube( music)?(\s-\s|$)")
+
+
 def looks_like_youtube(title: str) -> bool:
-    t = (title or "").strip().lower()
-    return t == "youtube" or t.endswith(("- youtube", "- youtube music"))
+    """"YouTube" como segmento do título: "<vídeo> - YouTube", e também com o sufixo que
+    o Chrome põe quando a aba toca ("... - YouTube - Reprodução de áudio")."""
+    return bool(_YOUTUBE_SEGMENT.search((title or "").strip().lower()))
 
 
 def is_private_window(title: str) -> bool:
@@ -238,9 +243,20 @@ class A11y:
                 continue
         return None
 
-    def private_media_is_youtube(self) -> bool | None:
+    def media_is_youtube(self, media_title: str) -> tuple[bool | None, bool]:
+        """(é YouTube?, certeza) para mídia de navegador sem URL. Com o título do vídeo
+        numa janela ou aba ("<vídeo> - YouTube") a resposta é certa; senão vale a regra
+        da janela privada. None: nenhum navegador no barramento."""
         windows = self.windows()
-        return None if windows is None else private_media_verdict(windows)
+        if windows is None:
+            return None, False
+        wanted = (media_title or "").strip().lower()
+        if wanted:
+            titles = [w.selected_title for w in windows] + [t.title for w in windows for t in w.tabs]
+            matches = [t for t in titles if wanted in t.lower()]
+            if matches:
+                return any(map(looks_like_youtube, matches)), True
+        return private_media_verdict(windows), False
 
     def _tabs(self, bus: str, path: str) -> list[Tab]:
         tabs, queue, visited = [], [(bus, path, 0)], 0

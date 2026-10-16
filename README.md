@@ -8,7 +8,7 @@ Maverick is a Linux desktop app with three jobs:
 
 | | |
 |---|---|
-| Version | 0.5.6 |
+| Version | 0.5.7 |
 | Language | Python 3.10+, no pip dependencies |
 | UI | GTK 4 + libadwaita (window), GTK 3 (on-screen counter) |
 | Tested on | Ubuntu 26.04, GNOME 50 (Wayland), Firefox 156 (snap) |
@@ -42,6 +42,7 @@ The window and the daemon share two JSON files. The window writes the config; th
 | 5 min or less left | yes | yellow |
 | Limit reached, play pressed | no; player paused within 1 s | `⛔ Tempo esgotado, volte amanhã` for 2 s |
 | YouTube video playing inside Google or DuckDuckGo search results | yes | as above |
+| YouTube in Google Chrome | yes, through the accessibility layer | as above |
 | Other site playing media (Pinterest, Spotify Web) in a normal window | no | hidden |
 | YouTube in a private window | yes, see detection layers | as above |
 | Two YouTube tabs in the same Firefox process | counted once | as above |
@@ -67,7 +68,7 @@ Implementation: `limit_minutes` holds the target limit; `today_cap` holds `{day,
 Every second the daemon lists `org.mpris.MediaPlayer2.*` on the session bus and reads `PlaybackStatus` and `Metadata`. A playing player counts as YouTube if the first applicable layer says so:
 
 1. **MPRIS metadata.** `xesam:url` (Firefox) or `mpris:artUrl` (Chrome) matches `youtube.com`, `youtu.be`, `youtube-nocookie.com`, `ytimg.com` or `googlevideo.com`. Exact. A YouTube video embedded in another page reports that page's URL; it still counts when the decoded URL cites the video: Google search previews put the ID in the fragment (`#...vid:v12vqnb0dAE`), DuckDuckGo carries the `youtube.com/watch` link in a parameter.
-2. **Accessibility tree (AT-SPI).** Used only for a browser player with no URL and no art URL, which is how Firefox and Chrome report media in private windows (Firefox sets the title to "O Firefox está reproduzindo mídia"). For each browser window on the accessibility bus the daemon reads:
+2. **Accessibility tree (AT-SPI).** Used for a browser player with no page URL and no web art URL. That is how Firefox reports media in private windows, and how Chrome reports all media: it never sends the URL and hands the artwork over as a local file. First the player title (the video title) is searched in window and tab titles. A match decides with certainty: YouTube when the matching title has `YouTube` as a segment (`<video> - YouTube`, also with Chrome's suffix `- Reprodução de áudio`). The verdict is remembered while the same video plays, so switching tabs keeps counting. Without a match, the private-window rule applies (Firefox sets the title to "O Firefox está reproduzindo mídia"). For each browser window on the accessibility bus the daemon reads:
    - the window title, which holds the selected tab's title and, for private windows, the suffix `— navegação privativa` (pt-BR) or `Private Browsing` (en);
    - the tab list: each tab's title, whether it is selected, and its sound button (`Silenciar aba`/`Mute tab` while playing, `Reproduzir som na aba`/`Play tab` when autoplay is blocked).
 
@@ -152,8 +153,8 @@ The list lives in `blocked_sites` in the config and can be edited in the window 
 From the release:
 
 ```bash
-wget https://github.com/luiz-nast/maverick/releases/download/v0.5.6/maverick_0.5.6_all.deb
-sudo apt install ./maverick_0.5.6_all.deb
+wget https://github.com/luiz-nast/maverick/releases/download/v0.5.7/maverick_0.5.7_all.deb
+sudo apt install ./maverick_0.5.7_all.deb
 systemctl --user daemon-reload
 systemctl --user enable --now maverick.service
 ```
@@ -285,7 +286,7 @@ GDK_BACKEND=wayland python3 packaging/screenshot.py docs/screenshot.png   # READ
 
 ## Known limitations
 
-- Chrome does not publish the page URL over MPRIS; detection relies on the `i.ytimg.com` thumbnail. Shorts without artwork may fall to layer 2 or 3.
+- Chrome does not publish the page URL over MPRIS and its artwork is a local file, so YouTube in Chrome depends on layer 2 (Chrome on the accessibility bus, which needs `toolkit-accessibility`). A video playing in a tab that has not been the selected tab of its window since it started is not matched until it is.
 - YouTube Music and YouTube ads are counted.
 - A YouTube video embedded in a page whose URL does not cite it (a blog post, a news article, Reddit) is not counted.
 - Layer 2 is tested against Firefox 156 (snap). Firefox can leave the tab list in the accessibility tree stale for a window that is not in the foreground; the window title stays current, so detection then relies on the selected tab only. A YouTube video playing in a non-selected tab of such a window is not detected.

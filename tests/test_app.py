@@ -54,8 +54,8 @@ class FakeA11y:
     def __init__(self, verdict=None, url=None):
         self.verdict, self.url = verdict, url
 
-    def private_media_is_youtube(self):
-        return self.verdict
+    def media_is_youtube(self, title):
+        return self.verdict, False
 
     def focused_tab(self):
         return ("aba", self.url) if self.url else None
@@ -171,6 +171,24 @@ class DaemonTest(unittest.TestCase):
         a.tick()
         self.assertTrue(a.overlay.visible)
         self.assertTrue(a.overlay.last.startswith("Instagram"))
+
+    def test_chrome_video_found_by_title_and_remembered(self):
+        a = self.make(limit=30)
+        chrome = Player("org.mpris.MediaPlayer2.chromium.instance52904", "Playing",
+                        "AI Killed The Best Job", "", "file:///tmp/.com.google.Chrome.dOZAtk")
+        self.assertTrue(chrome.metadata_hidden)
+        calls = []
+
+        class TitleA11y(FakeA11y):
+            def media_is_youtube(self, title):
+                calls.append(title)
+                return True, True
+
+        a.a11y = TitleA11y()
+        self.assertTrue(a.is_youtube(chrome))
+        a.a11y = FakeA11y(verdict=False)  # trocou de aba: o vídeo continua sendo YouTube
+        self.assertTrue(a.is_youtube(chrome))
+        self.assertEqual(calls, ["AI Killed The Best Job"])
 
     def test_pinterest_cycle(self):
         a = self.make(limit=30)

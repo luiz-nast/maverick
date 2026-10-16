@@ -52,8 +52,10 @@ class Player:
 
     @property
     def metadata_hidden(self) -> bool:
-        """Navegador sem URL nem capa: é como a mídia de janela privada aparece."""
-        return not (self.url or self.art_url) and any(b in self.bus_name.lower() for b in BROWSERS)
+        """Navegador sem URL da página: janela privada do Firefox, ou o Chrome, que nunca
+        manda a URL e entrega a capa como arquivo local."""
+        return (not self.url and not self.art_url.startswith(("http://", "https://"))
+                and any(b in self.bus_name.lower() for b in BROWSERS))
 
 
 class Mpris:

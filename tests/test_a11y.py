@@ -58,6 +58,26 @@ class VerdictTest(unittest.TestCase):
         self.assertFalse(private_media_verdict([]))
 
 
+class MediaTitleTest(unittest.TestCase):
+    def check(self, windows, title):
+        a = a11y_mod.A11y()
+        with mock.patch.object(a, "windows", return_value=windows):
+            return a.media_is_youtube(title)
+
+    def test_chrome_titles(self):
+        yt = Window("AI Killed The Best Job of the 21st Century - YouTube - Google Chrome", False, [])
+        other = Window("Instagram - Google Chrome", False, [])
+        self.assertEqual(self.check([other, yt], "AI Killed The Best Job of the 21st Century"), (True, True))
+        playing = Window("AI Killed The Best Job of the 21st Century - YouTube - Reprodução de áudio - Google Chrome",
+                         False, [])
+        self.assertEqual(self.check([playing], "AI Killed The Best Job of the 21st Century"), (True, True))
+        self.assertFalse(a11y_mod.looks_like_youtube("Como ganhar dinheiro - YouTube tips"))
+        vimeo = Window("Curta incrível on Vimeo - Google Chrome", False, [])
+        self.assertEqual(self.check([vimeo], "Curta incrível"), (False, True))
+        self.assertEqual(self.check([other], "Sem janela com esse título"), (False, False))
+        self.assertEqual(self.check(None, "x"), (None, False))
+
+
 class FocusedTabCacheTest(unittest.TestCase):
     """Documento guardado que deixou de existir não pode travar a detecção."""
 

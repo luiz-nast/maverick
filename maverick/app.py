@@ -60,6 +60,7 @@ class App:
 
             self.overlay, self.cover = Overlay(), Cover()
         self._sites_blocked: set[str] = set()
+        self._media_verdicts: dict[tuple[str, str], bool] = {}  # (player, título) -> é YouTube
         self._focused_site: str | None = None
         self._warned = False
         self._block_warned = False
@@ -89,10 +90,19 @@ class App:
         self._state_mtime = mtime(STATE_FILE)
 
     def is_youtube(self, p: Player) -> bool:
-        """Metadados do MPRIS; para janela privada, a acessibilidade; sem ela, a config."""
+        """Metadados do MPRIS; sem URL (janela privada, Chrome), o título do vídeo nas
+        janelas pela acessibilidade, lembrado enquanto o mesmo vídeo tocar; sem
+        acessibilidade, a config."""
         if p.is_youtube or not p.metadata_hidden:
             return p.is_youtube
-        verdict = self.a11y.private_media_is_youtube()
+        key = (p.bus_name, p.title)
+        if key in self._media_verdicts:
+            return self._media_verdicts[key]
+        verdict, certain = self.a11y.media_is_youtube(p.title)
+        if certain:
+            if len(self._media_verdicts) > 200:
+                self._media_verdicts.clear()
+            self._media_verdicts[key] = verdict
         return self.config.count_private_media if verdict is None else verdict
 
     def idle_seconds(self) -> float:
