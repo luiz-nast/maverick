@@ -109,6 +109,9 @@ class A11y:
         self._cache: list[Window] | None = None
         self._app_names: dict[str, str | None] = {}  # bus -> nome (None = ignorar)
         self._docs: dict[tuple[str, str], tuple[str, str]] = {}  # janela -> documento da aba visível
+        # janela -> quando passou a ACTIVE (0.0: já estava ativa na primeira varredura)
+        self._active_since: dict[tuple[str, str], float] = {}
+        self._scanned = False
 
     def _connect(self) -> Gio.DBusConnection | None:
         if self.conn is None:
@@ -192,7 +195,11 @@ class A11y:
 
     def focused_tab(self) -> tuple[str, str | None] | None:
         """(título, URL) da aba visível na janela de navegador em foco; None se nenhuma
-        janela de navegador estiver em foco. A URL é None se o documento não for achado."""
+        janela de navegador estiver em foco. A URL é None se o documento não for achado.
+
+        Uma janela pode ficar presa como ACTIVE (visto no Chrome, por horas, com o foco
+        no Firefox). Com mais de uma ativa, vale a que ficou ativa por último."""
+        active = []
         for _name, bus, path in self._browser_apps():
             try:
                 frames = self._children(bus, path)
@@ -201,12 +208,21 @@ class A11y:
             for frame in frames:
                 try:
                     if self._role(*frame) == "frame" and self._states(*frame) >> STATE_ACTIVE & 1:
-                        title = selected_title(self._name(*frame)).strip()
-                        return title, self._url_for(frame, title) if title else None
+                        active.append(frame)
                 except GLib.Error:
-                    self._docs.pop(frame, None)
                     continue
-        return None
+        now = time.monotonic() if self._scanned else 0.0
+        self._active_since = {f: self._active_since.get(f, now) for f in active}
+        self._scanned = True
+        if not active:
+            return None
+        frame = max(active, key=self._active_since.__getitem__)
+        try:
+            title = selected_title(self._name(*frame)).strip()
+            return title, self._url_for(frame, title) if title else None
+        except GLib.Error:
+            self._docs.pop(frame, None)
+            return None
 
     def focused_url(self) -> str | None:
         tab = self.focused_tab()

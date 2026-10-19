@@ -78,6 +78,29 @@ class MediaTitleTest(unittest.TestCase):
         self.assertEqual(self.check(None, "x"), (None, False))
 
 
+class StuckActiveWindowTest(unittest.TestCase):
+    """Chrome preso como ACTIVE não pode esconder o Firefox que recebeu o foco depois."""
+
+    def test_most_recently_activated_window_wins(self):
+        a = a11y_mod.A11y()
+        a.conn = object()
+        chrome, firefox = (":1.9", "/chrome"), (":1.5", "/firefox")
+        titles = {chrome: "Vagas - Google Chrome", firefox: "Instagram — Mozilla Firefox"}
+        active = {chrome: True, firefox: False}
+        apps = [("Google Chrome", ":1.9", "/app"), ("Firefox", ":1.5", "/app")]
+        with mock.patch.object(a, "_browser_apps", return_value=apps), \
+             mock.patch.object(a, "_children", side_effect=lambda b, p: [chrome] if b == ":1.9" else [firefox]), \
+             mock.patch.object(a, "_role", return_value="frame"), \
+             mock.patch.object(a, "_states", side_effect=lambda *f: int(active[f]) << a11y_mod.STATE_ACTIVE), \
+             mock.patch.object(a, "_name", side_effect=lambda *f: titles[f]), \
+             mock.patch.object(a, "_url_for", return_value=None):
+            self.assertEqual(a.focused_tab()[0], "Vagas")
+            active[firefox] = True  # foco foi para o Firefox; o Chrome continua "ativo"
+            self.assertEqual(a.focused_tab()[0], "Instagram")
+            active[firefox] = False  # saiu do Firefox
+            self.assertEqual(a.focused_tab()[0], "Vagas")
+
+
 class FocusedTabCacheTest(unittest.TestCase):
     """Documento guardado que deixou de existir não pode travar a detecção."""
 

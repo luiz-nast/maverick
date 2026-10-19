@@ -8,7 +8,7 @@ Maverick is a Linux desktop app with three jobs:
 
 | | |
 |---|---|
-| Version | 0.5.7 |
+| Version | 0.5.8 |
 | Language | Python 3.10+, no pip dependencies |
 | UI | GTK 4 + libadwaita (window), GTK 3 (on-screen counter) |
 | Tested on | Ubuntu 26.04, GNOME 50 (Wayland), Firefox 156 (snap) |
@@ -94,7 +94,7 @@ Subdomains match (`br.pinterest.com`, `www.instagram.com`). Rules are edited in 
 
 A second counts for a site when all hold:
 
-1. A browser window is the active (focused) window, read from the AT-SPI `ACTIVE` state of its frame.
+1. A browser window is the active (focused) window, read from the AT-SPI `ACTIVE` state of its frame. A window can stay stuck as `ACTIVE` (seen in Chrome for hours while Firefox had the focus); when several windows are active, the one that became active most recently wins. Right after the daemon starts, windows already active tie until the next focus change.
 2. The visible tab of that window is on the site. The window title gives the visible tab's title; the document whose name equals that title gives the URL through the AT-SPI Document attribute `DocURL`. The documents' `SHOWING` state is not used: Firefox 156 leaves it stale after tab switches. If no document matches yet, the site name as a word in the tab title decides (`(3) Instagram`, `Pin em ... | Pinterest`).
 3. The user is present: keyboard or mouse input in the last 90 s (GNOME `org.gnome.Mutter.IdleMonitor`), or media from that site is playing.
 
@@ -153,8 +153,8 @@ The list lives in `blocked_sites` in the config and can be edited in the window 
 From the release:
 
 ```bash
-wget https://github.com/luiz-nast/maverick/releases/download/v0.5.7/maverick_0.5.7_all.deb
-sudo apt install ./maverick_0.5.7_all.deb
+wget https://github.com/luiz-nast/maverick/releases/download/v0.5.8/maverick_0.5.8_all.deb
+sudo apt install ./maverick_0.5.8_all.deb
 systemctl --user daemon-reload
 systemctl --user enable --now maverick.service
 ```
