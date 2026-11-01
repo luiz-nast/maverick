@@ -8,7 +8,7 @@ Maverick is a Linux desktop app with three jobs:
 
 | | |
 |---|---|
-| Version | 0.5.10 |
+| Version | 0.5.11 |
 | Language | Python 3.10+, no pip dependencies |
 | UI | GTK 4 + libadwaita (window), GTK 3 (on-screen counter) |
 | Tested on | Ubuntu 26.04, GNOME 50 (Wayland), Firefox 156 (snap) |
@@ -153,8 +153,8 @@ The list lives in `blocked_sites` in the config and can be edited in the window 
 From the release:
 
 ```bash
-wget https://github.com/luiz-nast/maverick/releases/download/v0.5.10/maverick_0.5.10_all.deb
-sudo apt install ./maverick_0.5.10_all.deb
+wget https://github.com/luiz-nast/maverick/releases/download/v0.5.11/maverick_0.5.11_all.deb
+sudo apt install ./maverick_0.5.11_all.deb
 systemctl --user daemon-reload
 systemctl --user enable --now maverick.service
 ```
@@ -285,7 +285,7 @@ GDK_BACKEND=wayland python3 packaging/screenshot.py docs/screenshot.png   # READ
 - Fullscreen video covers it; counting and pausing continue.
 - Frame synchronization with the compositor is disabled on these windows (`GdkX11.X11Window.set_frame_sync_enabled(False)`). With it, GTK 3 waits for GNOME to confirm each frame; the pill was seen freezing and later turning solid black under XWayland while the daemon kept counting.
 - Each time the pill or the cover appears it gets a new X window (`unrealize` before showing).
-- Self-check every 5 s while the pill is on screen: its pixels are sampled. It fails when nothing bright is drawn, or when the text changed since the last check but the image did not (frozen). First failure: the window is recreated. Second in a row: the daemon saves state and exits with code 1; systemd (`Restart=on-failure`) starts a fresh one 3 s later.
+- There is no in-process paint self-check: reading the pill's own pixels from inside the daemon returned stale images and, together with window recreation, left the pill black (0.5.9 and 0.5.10). Verified side by side: the same daemon without the check kept the pill drawn.
 
 ## Known limitations
 

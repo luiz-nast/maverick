@@ -109,7 +109,6 @@ class Overlay(_TopWindow):
         self.label.get_style_context().add_class("pill")
         self.add(self.label)
         self._state = ""
-        self._last_check: tuple[str, bytes] | None = None
         self.connect("size-allocate", lambda *_: self._place())
 
     def _place(self) -> None:
@@ -133,21 +132,3 @@ class Overlay(_TopWindow):
             self.unrealize()
             self.show_all()
         self._place()
-
-    def painted(self) -> bool:
-        """A pílula está sendo desenhada? Falha se estiver toda escura (texto claro sumiu;
-        só os canais de cor contam, o alfa é sempre 255) ou congelada (o texto mudou desde
-        a última checagem e a imagem não)."""
-        win = self.get_window()
-        if not (win and self.get_visible()):
-            return True
-        width, height = self.get_size()
-        pixbuf = Gdk.pixbuf_get_from_window(win, 0, 0, width, height)
-        if pixbuf is None:
-            return True
-        px, n = pixbuf.get_pixels(), pixbuf.get_n_channels()
-        text, last = self.label.get_text(), self._last_check
-        self._last_check = (text, px)
-        if not any(max(px[i:i + 3]) > 60 for i in range(0, len(px), n)):
-            return False
-        return not (last and last[0] != text and last[1] == px)

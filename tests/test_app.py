@@ -36,9 +36,6 @@ class StubOverlay:
     def show_message(self, text, state):
         self.visible, self.last = True, text
 
-    def painted(self):
-        return getattr(self, "ok", True)
-
     def hide(self):
         self.visible = False
 
@@ -63,12 +60,6 @@ class FakeA11y:
 
     def focused_tab(self):
         return ("aba", self.url) if self.url else None
-
-
-def _black_overlay():
-    o = StubOverlay()
-    o.ok = False
-    return o
 
 
 class DaemonTest(unittest.TestCase):
@@ -199,19 +190,6 @@ class DaemonTest(unittest.TestCase):
         a.a11y = FakeA11y(verdict=False)  # trocou de aba: o vídeo continua sendo YouTube
         self.assertTrue(a.is_youtube(chrome))
         self.assertEqual(calls, ["AI Killed The Best Job"])
-
-    def test_unpainted_pill_is_recreated_then_restarts(self):
-        a = self.make(limit=30)
-        a.overlay.ok = True
-        self.assertTrue(a._check_painted())
-        self.assertEqual(a.exit_code, 0)
-        a.overlay.ok = False
-        a.overlay.destroy = lambda: None
-        with mock.patch("maverick.overlay.Overlay", side_effect=lambda: _black_overlay()):
-            self.assertTrue(a._check_painted())  # 1º: recria a janela
-            self.assertEqual(a.exit_code, 0)
-            self.assertFalse(a._check_painted())  # continua preta: reinicia
-        self.assertEqual(a.exit_code, 1)
 
     def test_pinterest_cycle(self):
         a = self.make(limit=30)
