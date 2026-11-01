@@ -8,7 +8,7 @@ Maverick is a Linux desktop app with three jobs:
 
 | | |
 |---|---|
-| Version | 0.5.11 |
+| Version | 0.5.12 |
 | Language | Python 3.10+, no pip dependencies |
 | UI | GTK 4 + libadwaita (window), GTK 3 (on-screen counter) |
 | Tested on | Ubuntu 26.04, GNOME 50 (Wayland), Firefox 156 (snap) |
@@ -24,7 +24,7 @@ Maverick is a Linux desktop app with three jobs:
 
 | Component | Command / file | Runs as | Purpose |
 |---|---|---|---|
-| Daemon | `maverick daemon`, systemd user unit `maverick.service` | user | Every second: YouTube time from MPRIS, focused site time from accessibility, pauses and covers at the limits, drives the counter. Checks the site block every 60 s |
+| Daemon | `maverick daemon`, systemd user unit `maverick.service`; a worker thread does all D-Bus work and counting, the main thread only draws | user | Every second: YouTube time from MPRIS, focused site time from accessibility, pauses and covers at the limits, drives the counter. Checks the site block every 60 s |
 | Window | `maverick` (menu entry "Maverick") | user | Today's usage ring, YouTube limit, private-window detection status with an Enable button, per-site screen time rules and live status, most watched videos, blocked-site list with Apply button |
 | Counter | part of the daemon | user | Always-on-top pill at the top-right: `▶ MM:SS / MM:SS` while a YouTube video plays, `Instagram MM:SS / 05:00` (time used in the round) while a ruled site is focused |
 | Cover | part of the daemon | user | Full work-area notice shown while a blocked site is the focused tab; hides as soon as another tab or app is focused |
@@ -153,8 +153,8 @@ The list lives in `blocked_sites` in the config and can be edited in the window 
 From the release:
 
 ```bash
-wget https://github.com/luiz-nast/maverick/releases/download/v0.5.11/maverick_0.5.11_all.deb
-sudo apt install ./maverick_0.5.11_all.deb
+wget https://github.com/luiz-nast/maverick/releases/download/v0.5.12/maverick_0.5.12_all.deb
+sudo apt install ./maverick_0.5.12_all.deb
 systemctl --user daemon-reload
 systemctl --user enable --now maverick.service
 ```
@@ -253,7 +253,7 @@ A `day` different from today's local date resets `seconds`, `per_video` and each
 maverick/__main__.py    CLI and subcommands
 maverick/app.py         daemon loop: YouTube and focused-site counting, pause, cover, overlay, block watch
 maverick/sites.py       focused screen time cycles, URL and title matching, status texts
-maverick/dbus.py        shared synchronous D-Bus helpers (Gio)
+maverick/dbus.py        shared synchronous D-Bus helpers (Gio) and strike-based quarantine
 maverick/mpris.py       MPRIS players over D-Bus, YouTube detection (direct and embedded), Pause()
 maverick/a11y.py        AT-SPI: window titles, tabs, tab sound state, focused window's visible URL
 maverick/overlay.py     GTK 3 always-on-top counter pill and blocking cover (forces GDK_BACKEND=x11)
@@ -276,6 +276,15 @@ python3 -m maverick daemon --debug          # daemon from source
 packaging/build-deb.sh                      # build the package
 GDK_BACKEND=wayland python3 packaging/screenshot.py docs/screenshot.png   # README image
 ```
+
+## Robustness
+
+- **Two threads.** The worker thread queries MPRIS and AT-SPI, counts and saves once per second (cycle time subtracted). It publishes a snapshot; the GTK main thread only draws, from a 250 ms timer and `GLib.idle_add`. No GTK call happens on the worker. Measured with the user's browsers and a permanently hung MPRIS player present: main-loop latency at most 4 ms, cycle median 9 ms, max 333 ms.
+- **Short timeouts.** MPRIS calls 300 ms, AT-SPI calls 500 ms, and each AT-SPI tree search stops after 0.5 s.
+- **Quarantine after strikes.** A peer (MPRIS player or accessibility app) that fails 3 times in a row is skipped for 60 s; any success resets the count, so a single slow reply from the real browser does not drop it. Seen in practice: a Chrome `--app` window whose MPRIS interface never answers.
+- **Blocking fails closed.** If the worker is late, the cover stays up for a blocked site; the pill hides 2 s after the last snapshot that was playing.
+- **Saves.** Each process and thread writes its own temporary file before the atomic rename, so the daemon, the window and `maverick reset` cannot collide. At shutdown the final save only runs once the worker has stopped.
+- Notification closing is sent without waiting for a reply.
 
 ## Counter window details
 

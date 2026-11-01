@@ -23,6 +23,8 @@ PREFIX = "org.mpris.MediaPlayer2."
 PATH = "/org/mpris/MediaPlayer2"
 PLAYER = "org.mpris.MediaPlayer2.Player"
 BROWSERS = ("firefox", "chrom", "brave", "vivaldi", "opera", "edge")
+TIMEOUT_MS = 300
+
 YOUTUBE_RE = re.compile(
     r"(^|[./])(youtube\.com|youtu\.be|youtube-nocookie\.com|ytimg\.com|googlevideo\.com)(/|$)", re.IGNORECASE
 )
@@ -59,21 +61,27 @@ class Player:
 
 
 class Mpris:
+    """Um player travado (visto: Chrome em modo app que não responde) não pode atrasar
+    as consultas: espera curta e, depois de falhas seguidas, quarentena."""
+
     def __init__(self) -> None:
         self.bus = dbus.session()
+        self.strikes = dbus.Strikes()
 
     def players(self) -> list[Player]:
         names = dbus.call(self.bus, "org.freedesktop.DBus", "/org/freedesktop/DBus",
                           "org.freedesktop.DBus", "ListNames", reply="(as)")[0]
         found = []
         for name in names:
-            if not name.startswith(PREFIX):
+            if not name.startswith(PREFIX) or self.strikes.blocked(name):
                 continue
             try:
                 props = dbus.call(self.bus, name, PATH, "org.freedesktop.DBus.Properties", "GetAll",
-                                  GLib.Variant("(s)", (PLAYER,)), "(a{sv})")[0]
+                                  GLib.Variant("(s)", (PLAYER,)), "(a{sv})", TIMEOUT_MS)[0]
             except GLib.Error:
-                continue  # sumiu no meio do caminho ou acesso negado
+                self.strikes.fail(name)
+                continue
+            self.strikes.ok(name)
             meta = props.get("Metadata") or {}
             fields = (str(meta.get(k) or "") for k in ("xesam:title", "xesam:url", "mpris:artUrl"))
             found.append(Player(name, str(props.get("PlaybackStatus", "Stopped")), *fields))
@@ -81,6 +89,6 @@ class Mpris:
 
     def pause(self, player: Player) -> None:
         try:
-            dbus.call(self.bus, player.bus_name, PATH, PLAYER, "Pause")
+            dbus.call(self.bus, player.bus_name, PATH, PLAYER, "Pause", timeout=TIMEOUT_MS)
         except GLib.Error:
             pass

@@ -35,7 +35,8 @@ from .mpris import BROWSERS
 ACCESSIBLE = "org.a11y.atspi.Accessible"
 SKIP_ROLES = {"document web", "document frame", "internal frame", "embedded"}  # conteúdo da página
 STATE_ACTIVE, STATE_SELECTED = 1, 23
-TIMEOUT = 1000
+TIMEOUT = 500
+SEARCH_SECONDS = 0.5  # teto de tempo para uma busca na árvore de um navegador
 CACHE_SECONDS = 3
 MAX_NODES = 1500
 MAX_DEPTH = 14
@@ -108,6 +109,7 @@ class A11y:
         self._cache_at = 0.0
         self._cache: list[Window] | None = None
         self._app_names: dict[str, str | None] = {}  # bus -> nome (None = ignorar)
+        self.strikes = dbus.Strikes()  # apps que não respondem
         self._docs: dict[tuple[str, str], tuple[str, str]] = {}  # janela -> documento da aba visível
         # janela -> quando passou a ACTIVE (0.0: já estava ativa na primeira varredura)
         self._active_since: dict[tuple[str, str], float] = {}
@@ -145,13 +147,17 @@ class A11y:
         """Nome do app, guardado por conexão. O próprio processo é ignorado: com a
         acessibilidade ligada a janela GTK do Maverick também está no barramento, e
         perguntar a si mesmo de forma síncrona trava até o timeout."""
+        if self.strikes.blocked(bus):
+            return None
         if bus not in self._app_names:
             try:
                 pid = dbus.call(self.conn, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
-                                "GetConnectionUnixProcessID", GLib.Variant("(s)", (bus,)), "(u)")[0]
+                                "GetConnectionUnixProcessID", GLib.Variant("(s)", (bus,)), "(u)", TIMEOUT)[0]
                 self._app_names[bus] = None if pid == os.getpid() else self._name(bus, path)
             except GLib.Error:
-                return None  # tenta de novo na próxima varredura
+                self.strikes.fail(bus)
+                return None
+            self.strikes.ok(bus)
         return self._app_names[bus]
 
     def _browser_apps(self) -> list[tuple[str, str, str]]:
@@ -182,7 +188,9 @@ class A11y:
                 try:
                     frames = self._children(bus, path)
                 except GLib.Error:
+                    self.strikes.fail(bus)
                     continue
+                self.strikes.ok(bus)
                 for fb, fp in frames:
                     try:
                         if self._role(fb, fp) == "frame":
@@ -204,7 +212,9 @@ class A11y:
             try:
                 frames = self._children(bus, path)
             except GLib.Error:
+                self.strikes.fail(bus)
                 continue
+            self.strikes.ok(bus)
             for frame in frames:
                 try:
                     if self._role(*frame) == "frame" and self._states(*frame) >> STATE_ACTIVE & 1:
@@ -245,8 +255,8 @@ class A11y:
 
     def _find_doc(self, frame: tuple[str, str], title: str) -> tuple[str, str] | None:
         """Documento cujo nome é o título da aba visível."""
-        queue, visited = [(*frame, 0)], 0
-        while queue and visited < MAX_NODES:
+        queue, visited, deadline = [(*frame, 0)], 0, time.monotonic() + SEARCH_SECONDS
+        while queue and visited < MAX_NODES and time.monotonic() < deadline:
             b, p, depth = queue.pop(0)
             visited += 1
             try:
@@ -275,8 +285,8 @@ class A11y:
         return private_media_verdict(windows), False
 
     def _tabs(self, bus: str, path: str) -> list[Tab]:
-        tabs, queue, visited = [], [(bus, path, 0)], 0
-        while queue and visited < MAX_NODES:
+        tabs, queue, visited, deadline = [], [(bus, path, 0)], 0, time.monotonic() + SEARCH_SECONDS
+        while queue and visited < MAX_NODES and time.monotonic() < deadline:
             b, p, depth = queue.pop(0)
             visited += 1
             try:

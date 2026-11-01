@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from pathlib import Path
@@ -61,7 +62,9 @@ def _load(cls, path: Path):
 
 def _save(obj, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
+    # Temporário próprio por processo e linha: daemon, janela e `maverick reset` gravam
+    # o mesmo arquivo e não podem pisar no temporário um do outro.
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     tmp.write_text(json.dumps(asdict(obj), indent=2, ensure_ascii=False))
     os.replace(tmp, path)
 

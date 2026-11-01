@@ -1,14 +1,22 @@
 """Daemon. A cada segundo: soma tempo do YouTube se um vídeo está tocando (MPRIS) e
 pausa no limite; soma tempo de tela do site em foco (Instagram, Pinterest...) e
-cobre a tela quando ele está bloqueado. A cada minuto confere o bloqueio de sites."""
+cobre a tela quando ele está bloqueado. A cada minuto confere o bloqueio de sites.
+
+Duas linhas de execução. A de trabalho consulta o D-Bus e conta; essas consultas
+podem esperar outros programas (um player travado levava 1 s por consulta). A
+principal só desenha: pílula e tela de bloqueio, a partir do último retrato que a
+de trabalho publicou, num relógio próprio. Assim a pílula anda e some na hora mesmo
+quando alguma consulta demora."""
 
 from __future__ import annotations
 
 import logging
 import signal
+import threading
 import time
+from dataclasses import dataclass
 
-from gi.repository import GLib
+from gi.repository import Gio, GLib
 
 from . import blocking, dbus
 from .a11y import A11y
@@ -21,6 +29,7 @@ BLOCK_CHECK_SECONDS = 60
 IDLE_SECONDS = 90  # sem teclado/mouse por mais que isso e sem mídia: ausente, não conta
 TIME_UP = "⛔ Tempo esgotado, volte amanhã"
 NOTIFY_SECONDS = 2
+RENDER_MS = 250
 _NOTIFY = ("org.freedesktop.Notifications", "/org/freedesktop/Notifications", "org.freedesktop.Notifications")
 
 
@@ -42,11 +51,21 @@ def notify(summary: str, body: str = "", critical: bool = False) -> None:
 
 
 def _close_notification(bus, nid: int) -> bool:
-    try:
-        dbus.call(bus, *_NOTIFY, "CloseNotification", GLib.Variant("(u)", (nid,)))
-    except GLib.Error:
-        pass
+    # Roda na linha principal: chamada sem esperar resposta, para nunca travar a pílula.
+    bus.call(*_NOTIFY, "CloseNotification", GLib.Variant("(u)", (nid,)), None,
+             Gio.DBusCallFlags.NONE, 1000, None, None, None)
     return False
+
+
+@dataclass
+class Snapshot:
+    """O que a linha de trabalho viu no último ciclo; a principal desenha a partir disso."""
+    at: float
+    playing: bool
+    status: str
+    used: int
+    limit: int
+    site: SiteStatus | None
 
 
 class App:
@@ -64,6 +83,9 @@ class App:
         self._focused_site: str | None = None
         self._warned = False
         self._block_warned = False
+        self._snapshot: Snapshot | None = None
+        self._threaded = False
+        self._stop = threading.Event()
         self._last_status = None
         self._visible_until = 0.0
         self._pill = ("", "idle")  # o que a pílula mostra; fica igual nos segundos finais
@@ -175,7 +197,12 @@ class App:
         if status != self._last_status:
             log.info("%s  %s / %s", status, fmt(self.state.seconds), fmt(self.limit_seconds))
             self._last_status = status
-        self._update_overlay(bool(playing), status, site)
+        self._snapshot = Snapshot(time.monotonic(), bool(playing), status,
+                                  self.state.seconds, self.limit_seconds, site)
+        if self._threaded:
+            GLib.idle_add(self._render)
+        else:
+            self._render()
         return True
 
     def _notify_thresholds(self) -> None:
@@ -186,29 +213,48 @@ class App:
             self._warned = True
             notify("YouTube: quase no limite", f"Faltam {fmt(left)} para hoje.")
 
-    def _update_overlay(self, playing: bool, status: str, site: SiteStatus | None) -> None:
-        """Site bloqueado em foco: cobre a tela. Senão a pílula aparece enquanto o vídeo
-        toca ou o site está em foco, mais `hide_after_seconds`; com o YouTube estourado,
-        cada tentativa de play mostra o aviso pelo mesmo tempo."""
-        if not self.overlay:
-            return
+    def _render(self) -> bool:
+        """Só na linha principal. Site bloqueado em foco: cobre a tela, e continua coberta
+        mesmo se a linha de trabalho atrasar (bloqueio falha fechado). Senão a pílula
+        aparece enquanto o vídeo toca ou o site está em foco, mais `hide_after_seconds`
+        contados do retrato; com o YouTube estourado, cada tentativa de play mostra o
+        aviso pelo mesmo tempo."""
+        snap = self._snapshot
+        if not self.overlay or snap is None:
+            return False
+        now = time.monotonic()
+        site = snap.site
         if site and site.blocked:
             self.overlay.hide()
             self.cover.show_block(f"{site.name} bloqueado", site.block_message)
-            return
+            return False
         self.cover.hide()
-        now = time.monotonic()
         if site:
             self._pill = (site.pill, "warning" if site.allow - site.used <= 60 else "playing")
-        elif playing:
-            self._pill = ((TIME_UP, "blocked") if self.over_limit else
-                          (self.overlay.text(self.state.seconds, self.limit_seconds, status), status))
-        if site or playing:
-            self._visible_until = now + self.config.hide_after_seconds
+        elif snap.playing:
+            self._pill = ((TIME_UP, "blocked") if snap.used >= snap.limit else
+                          (self.overlay.text(snap.used, snap.limit, snap.status), snap.status))
+        if site or snap.playing:
+            self._visible_until = max(self._visible_until, snap.at + self.config.hide_after_seconds)
         if now >= self._visible_until:
             self.overlay.hide()
         else:
             self.overlay.show_message(*self._pill)
+        return False
+
+    def _render_timer(self) -> bool:
+        self._render()
+        return True
+
+    def _work(self) -> None:
+        """Linha de trabalho: um ciclo por segundo, descontando o tempo gasto no ciclo."""
+        while not self._stop.is_set():
+            started = time.monotonic()
+            try:
+                self.tick()
+            except Exception:  # noqa: BLE001 - o contador não pode morrer por um ciclo ruim
+                log.exception("Erro no ciclo do contador")
+            self._stop.wait(max(0.05, 1.0 - (time.monotonic() - started)))
 
     def _check_block(self) -> bool:
         """Avisa uma vez se algum site da lista saiu do /etc/hosts."""
@@ -227,13 +273,18 @@ class App:
         for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
             GLib.unix_signal_add(GLib.PRIORITY_HIGH, sig, lambda *_: loop.quit() or False)
         log.info("Maverick iniciado. Hoje: %s / %s", fmt(self.state.seconds), fmt(self.limit_seconds))
-        self.tick()
+        self._threaded = True
+        worker = threading.Thread(target=self._work, name="maverick-trabalho", daemon=True)
+        worker.start()
         self._check_block()
-        GLib.timeout_add(1000, self.tick)  # precisão de 1 s: cada tick soma 1 s
+        GLib.timeout_add(RENDER_MS, self._render_timer)
         GLib.timeout_add_seconds(BLOCK_CHECK_SECONDS, self._check_block)
         try:
             loop.run()
         finally:
-            self._save_state()
+            self._stop.set()
+            worker.join(timeout=3)
+            if not worker.is_alive():  # cada segundo contado já foi gravado pela linha de trabalho
+                self._save_state()
             log.info("Encerrando. Estado salvo: %s / %s", fmt(self.state.seconds), fmt(self.limit_seconds))
         return 0
