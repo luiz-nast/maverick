@@ -14,7 +14,8 @@ import gi  # noqa: E402
 
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
-from gi.repository import Gdk, Gtk  # noqa: E402
+gi.require_version("GdkX11", "3.0")
+from gi.repository import Gdk, GdkX11, Gtk  # noqa: E402
 
 from .store import fmt  # noqa: E402
 
@@ -61,6 +62,16 @@ class _TopWindow(Gtk.Window):
             self.set_visual(visual)  # transparência
         self.set_app_paintable(True)
         self.connect("delete-event", lambda *_: True)  # não deixa fechar
+        self.connect("realize", self._no_frame_sync)
+
+    @staticmethod
+    def _no_frame_sync(widget) -> None:
+        """Sem sincronizar quadros com o compositor (_NET_WM_SYNC_REQUEST): com ela o GTK 3
+        espera o GNOME confirmar cada quadro e, se a confirmação para de vir, a janela
+        congela e depois fica preta (visto com a pílula sob XWayland)."""
+        window = widget.get_window()
+        if isinstance(window, GdkX11.X11Window):
+            window.set_frame_sync_enabled(False)
 
 
 class Cover(_TopWindow):
@@ -98,6 +109,7 @@ class Overlay(_TopWindow):
         self.label.get_style_context().add_class("pill")
         self.add(self.label)
         self._state = ""
+        self._last_check: tuple[str, bytes] | None = None
         self.connect("size-allocate", lambda *_: self._place())
 
     def _place(self) -> None:
@@ -123,10 +135,19 @@ class Overlay(_TopWindow):
         self._place()
 
     def painted(self) -> bool:
-        """A pílula tem texto claro sobre fundo escuro; tudo escuro = não foi desenhada."""
+        """A pílula está sendo desenhada? Falha se estiver toda escura (texto claro sumiu;
+        só os canais de cor contam, o alfa é sempre 255) ou congelada (o texto mudou desde
+        a última checagem e a imagem não)."""
         win = self.get_window()
         if not (win and self.get_visible()):
             return True
         width, height = self.get_size()
-        pixbuf = Gdk.pixbuf_get_from_window(win, 0, height // 2 - 4, width, 8)
-        return pixbuf is None or max(pixbuf.get_pixels()) > 60
+        pixbuf = Gdk.pixbuf_get_from_window(win, 0, 0, width, height)
+        if pixbuf is None:
+            return True
+        px, n = pixbuf.get_pixels(), pixbuf.get_n_channels()
+        text, last = self.label.get_text(), self._last_check
+        self._last_check = (text, px)
+        if not any(max(px[i:i + 3]) > 60 for i in range(0, len(px), n)):
+            return False
+        return not (last and last[0] != text and last[1] == px)

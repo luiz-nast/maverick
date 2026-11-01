@@ -1,6 +1,7 @@
 import os
 import time
 import unittest
+from unittest import mock
 
 from maverick import app as appmod
 from maverick.mpris import Player
@@ -62,6 +63,12 @@ class FakeA11y:
 
     def focused_tab(self):
         return ("aba", self.url) if self.url else None
+
+
+def _black_overlay():
+    o = StubOverlay()
+    o.ok = False
+    return o
 
 
 class DaemonTest(unittest.TestCase):
@@ -193,13 +200,17 @@ class DaemonTest(unittest.TestCase):
         self.assertTrue(a.is_youtube(chrome))
         self.assertEqual(calls, ["AI Killed The Best Job"])
 
-    def test_unpainted_pill_asks_for_restart(self):
+    def test_unpainted_pill_is_recreated_then_restarts(self):
         a = self.make(limit=30)
         a.overlay.ok = True
-        self.assertFalse(a._check_painted())
+        self.assertTrue(a._check_painted())
         self.assertEqual(a.exit_code, 0)
         a.overlay.ok = False
-        a._check_painted()
+        a.overlay.destroy = lambda: None
+        with mock.patch("maverick.overlay.Overlay", side_effect=lambda: _black_overlay()):
+            self.assertTrue(a._check_painted())  # 1º: recria a janela
+            self.assertEqual(a.exit_code, 0)
+            self.assertFalse(a._check_painted())  # continua preta: reinicia
         self.assertEqual(a.exit_code, 1)
 
     def test_pinterest_cycle(self):

@@ -21,6 +21,7 @@ BLOCK_CHECK_SECONDS = 60
 IDLE_SECONDS = 90  # sem teclado/mouse por mais que isso e sem mídia: ausente, não conta
 TIME_UP = "⛔ Tempo esgotado, volte amanhã"
 NOTIFY_SECONDS = 2
+PAINT_CHECK_SECONDS = 5
 _NOTIFY = ("org.freedesktop.Notifications", "/org/freedesktop/Notifications", "org.freedesktop.Notifications")
 
 
@@ -67,8 +68,8 @@ class App:
         self._last_status = None
         self._visible_until = 0.0
         self._pill = ("", "idle")  # o que a pílula mostra; fica igual nos segundos finais
-        self._pill_was_visible = False
         self._loop: GLib.MainLoop | None = None
+        self._renewed = False  # já recriou a janela da pílula uma vez sem sucesso?
         self.exit_code = 0
 
     @property
@@ -209,21 +210,29 @@ class App:
             self._visible_until = now + self.config.hide_after_seconds
         if now >= self._visible_until:
             self.overlay.hide()
-            self._pill_was_visible = False
         else:
             self.overlay.show_message(*self._pill)
-            if not self._pill_was_visible:
-                self._pill_was_visible = True
-                GLib.timeout_add(1500, self._check_painted)
 
     def _check_painted(self) -> bool:
-        """Autoverificação: se a pílula aparece mas não é desenhada, sai com erro e o
-        systemd (Restart=on-failure) sobe um contador novo; o estado é salvo antes."""
-        if self.overlay and not self.overlay.painted():
-            log.error("A pílula não está sendo desenhada; reiniciando o contador.")
-            self.exit_code = 1
-            if self._loop:
-                self._loop.quit()
+        """A cada PAINT_CHECK_SECONDS com a pílula na tela: a janela X dela pode congelar
+        e depois ficar toda preta (visto com XWayland). Primeiro recria a janela;
+        se continuar preta, sai com erro e o systemd (Restart=on-failure) sobe um contador
+        novo, que comprovadamente volta a desenhar. O estado é salvo antes."""
+        if not self.overlay or self.overlay.painted():
+            self._renewed = False
+            return True
+        if not self._renewed:
+            log.warning("A pílula não está sendo desenhada; recriando a janela.")
+            from .overlay import Overlay
+
+            self.overlay.destroy()
+            self.overlay, self._renewed = Overlay(), True
+            self.overlay.show_message(*self._pill)
+            return True
+        log.error("A pílula continua sem desenho; reiniciando o contador.")
+        self.exit_code = 1
+        if self._loop:
+            self._loop.quit()
         return False
 
     def _check_block(self) -> bool:
@@ -247,6 +256,8 @@ class App:
         self._check_block()
         GLib.timeout_add(1000, self.tick)  # precisão de 1 s: cada tick soma 1 s
         GLib.timeout_add_seconds(BLOCK_CHECK_SECONDS, self._check_block)
+        if self.overlay:
+            GLib.timeout_add_seconds(PAINT_CHECK_SECONDS, self._check_painted)
         try:
             loop.run()
         finally:
