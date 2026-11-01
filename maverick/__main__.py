@@ -24,8 +24,7 @@ def cmd_daemon(args) -> int:
                         format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
     from .app import App
 
-    App(show_overlay=not args.no_overlay, debug=args.debug).run()
-    return 0
+    return App(show_overlay=not args.no_overlay, debug=args.debug).run()
 
 
 def cmd_status(_args) -> int:

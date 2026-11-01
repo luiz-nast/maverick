@@ -8,7 +8,7 @@ Maverick is a Linux desktop app with three jobs:
 
 | | |
 |---|---|
-| Version | 0.5.8 |
+| Version | 0.5.9 |
 | Language | Python 3.10+, no pip dependencies |
 | UI | GTK 4 + libadwaita (window), GTK 3 (on-screen counter) |
 | Tested on | Ubuntu 26.04, GNOME 50 (Wayland), Firefox 156 (snap) |
@@ -153,8 +153,8 @@ The list lives in `blocked_sites` in the config and can be edited in the window 
 From the release:
 
 ```bash
-wget https://github.com/luiz-nast/maverick/releases/download/v0.5.8/maverick_0.5.8_all.deb
-sudo apt install ./maverick_0.5.8_all.deb
+wget https://github.com/luiz-nast/maverick/releases/download/v0.5.9/maverick_0.5.9_all.deb
+sudo apt install ./maverick_0.5.9_all.deb
 systemctl --user daemon-reload
 systemctl --user enable --now maverick.service
 ```
@@ -272,7 +272,7 @@ tests/                  unittest suite
 ```bash
 python3 -m maverick                         # window from source
 python3 -m maverick daemon --debug          # daemon from source
-python3 -m unittest discover -s tests -t .  # tests
+/usr/bin/python3 -m unittest discover -s tests -t .  # tests (system Python: needs python3-gi)
 packaging/build-deb.sh                      # build the package
 GDK_BACKEND=wayland python3 packaging/screenshot.py docs/screenshot.png   # README image
 ```
@@ -283,6 +283,8 @@ GDK_BACKEND=wayland python3 packaging/screenshot.py docs/screenshot.png   # READ
 - GNOME on Wayland ignores keep-above for native Wayland windows, so the counter runs through XWayland (`GDK_BACKEND=x11`), where Mutter honors `_NET_WM_STATE_ABOVE`.
 - Placed at the top-right of the primary monitor's work area, below the top bar.
 - Fullscreen video covers it; counting and pausing continue.
+- Each time the pill or the cover appears it gets a new X window (`unrealize` before showing). After days of suspends and memory pressure an old window was seen staying mapped but painted solid black.
+- Self-check: 1.5 s after the pill appears its pixels are sampled. If nothing bright is drawn, the daemon saves state and exits with code 1; systemd (`Restart=on-failure`) starts a fresh one 3 s later.
 
 ## Known limitations
 

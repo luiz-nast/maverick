@@ -84,6 +84,7 @@ class Cover(_TopWindow):
         self.title.set_text(title)
         self.text.set_text(text)
         if not self.get_visible():
+            self.unrealize()  # janela X nova a cada aparição (ver Overlay.show_message)
             area = _workarea()
             self.set_size_request(area.width, area.height)
             self.move(area.x, area.y)
@@ -115,5 +116,17 @@ class Overlay(_TopWindow):
         ctx.add_class(state)
         self._state = state
         if not self.get_visible():
+            # Janela X nova a cada aparição: a anterior pode ter parado de ser pintada
+            # (visto depois de dias com suspensões e falta de memória: retângulo preto).
+            self.unrealize()
             self.show_all()
         self._place()
+
+    def painted(self) -> bool:
+        """A pílula tem texto claro sobre fundo escuro; tudo escuro = não foi desenhada."""
+        win = self.get_window()
+        if not (win and self.get_visible()):
+            return True
+        width, height = self.get_size()
+        pixbuf = Gdk.pixbuf_get_from_window(win, 0, height // 2 - 4, width, 8)
+        return pixbuf is None or max(pixbuf.get_pixels()) > 60

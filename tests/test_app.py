@@ -35,6 +35,9 @@ class StubOverlay:
     def show_message(self, text, state):
         self.visible, self.last = True, text
 
+    def painted(self):
+        return getattr(self, "ok", True)
+
     def hide(self):
         self.visible = False
 
@@ -189,6 +192,15 @@ class DaemonTest(unittest.TestCase):
         a.a11y = FakeA11y(verdict=False)  # trocou de aba: o vídeo continua sendo YouTube
         self.assertTrue(a.is_youtube(chrome))
         self.assertEqual(calls, ["AI Killed The Best Job"])
+
+    def test_unpainted_pill_asks_for_restart(self):
+        a = self.make(limit=30)
+        a.overlay.ok = True
+        self.assertFalse(a._check_painted())
+        self.assertEqual(a.exit_code, 0)
+        a.overlay.ok = False
+        a._check_painted()
+        self.assertEqual(a.exit_code, 1)
 
     def test_pinterest_cycle(self):
         a = self.make(limit=30)

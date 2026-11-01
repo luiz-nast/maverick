@@ -67,6 +67,9 @@ class App:
         self._last_status = None
         self._visible_until = 0.0
         self._pill = ("", "idle")  # o que a pílula mostra; fica igual nos segundos finais
+        self._pill_was_visible = False
+        self._loop: GLib.MainLoop | None = None
+        self.exit_code = 0
 
     @property
     def limit_seconds(self) -> int:
@@ -206,8 +209,22 @@ class App:
             self._visible_until = now + self.config.hide_after_seconds
         if now >= self._visible_until:
             self.overlay.hide()
+            self._pill_was_visible = False
         else:
             self.overlay.show_message(*self._pill)
+            if not self._pill_was_visible:
+                self._pill_was_visible = True
+                GLib.timeout_add(1500, self._check_painted)
+
+    def _check_painted(self) -> bool:
+        """Autoverificação: se a pílula aparece mas não é desenhada, sai com erro e o
+        systemd (Restart=on-failure) sobe um contador novo; o estado é salvo antes."""
+        if self.overlay and not self.overlay.painted():
+            log.error("A pílula não está sendo desenhada; reiniciando o contador.")
+            self.exit_code = 1
+            if self._loop:
+                self._loop.quit()
+        return False
 
     def _check_block(self) -> bool:
         """Avisa uma vez se algum site da lista saiu do /etc/hosts."""
@@ -220,8 +237,8 @@ class App:
         self._block_warned = bool(missing)
         return True
 
-    def run(self) -> None:
-        loop = GLib.MainLoop()
+    def run(self) -> int:
+        loop = self._loop = GLib.MainLoop()
         # Shutdown/restart mandam SIGTERM; sem tratar, o `finally` não roda.
         for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
             GLib.unix_signal_add(GLib.PRIORITY_HIGH, sig, lambda *_: loop.quit() or False)
@@ -235,3 +252,4 @@ class App:
         finally:
             self._save_state()
             log.info("Encerrando. Estado salvo: %s / %s", fmt(self.state.seconds), fmt(self.limit_seconds))
+        return self.exit_code
