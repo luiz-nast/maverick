@@ -324,7 +324,8 @@ class Window(Adw.ApplicationWindow):
         self.private_button.set_visible(not enabled)
         self.fallback_row.set_visible(mode != "exact")
 
-        enabled = bool(self._shell) and FOCUS_EXT in self._shell.get_strv("enabled-extensions")
+        enabled = (bool(self._shell) and FOCUS_EXT in self._shell.get_strv("enabled-extensions")
+                   and FOCUS_EXT not in self._shell.get_strv("disabled-extensions"))
         mode = "on" if self._a11y.shell_focus() is not None else "login" if enabled else "off"
         subtitle, icon, css = FOCUS_STATES[mode]
         self.focus_row.set_subtitle(subtitle)
@@ -385,6 +386,9 @@ class Window(Adw.ApplicationWindow):
             self.refresh_usage()
 
     def _on_enable_focus(self, _btn) -> None:
+        off = self._shell.get_strv("disabled-extensions")
+        if FOCUS_EXT in off:
+            self._shell.set_strv("disabled-extensions", [e for e in off if e != FOCUS_EXT])
         exts = self._shell.get_strv("enabled-extensions")
         if FOCUS_EXT not in exts:
             self._shell.set_strv("enabled-extensions", exts + [FOCUS_EXT])

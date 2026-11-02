@@ -147,7 +147,9 @@ class App:
             self._focused_site = domain
         if not domain:
             return None
-        site_media = [p for p in players if p.is_playing and (site_for_url(p.url, [domain]) or p.metadata_hidden)]
+        # Mídia sem URL pode ser do site; a que já se sabe ser YouTube não é.
+        site_media = [p for p in players if p.is_playing and (site_for_url(p.url, [domain])
+                                                              or p.metadata_hidden and not self.is_youtube(p))]
         st = self.state.sites.setdefault(domain, {})
         before = st.get("seconds", 0)
         status = evaluate(self.config, domain, st, time.time(),

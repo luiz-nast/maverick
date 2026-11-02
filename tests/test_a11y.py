@@ -38,6 +38,11 @@ class VerdictTest(unittest.TestCase):
         tabs = [Tab(YT, True, None), Tab(VIMEO, False, "playing")]
         self.assertFalse(private_media_verdict([win(YT, tabs)]))
 
+    def test_chrome_audio_mark_keeps_tab_list_fresh(self):
+        w = Window("Reels • Instagram - Reprodução de áudio - Google Chrome", True,
+                   [Tab("Reels • Instagram - Reprodução de áudio", True, "playing"), Tab(YT, False, "playing")])
+        self.assertTrue(w.tabs_fresh)
+
     def test_blocked_audio_is_not_playing(self):
         tabs = [Tab(YT, False, "blocked"), Tab(VIMEO, True, None)]
         self.assertFalse(private_media_verdict([win(VIMEO, tabs)]))
@@ -88,7 +93,8 @@ class StuckActiveWindowTest(unittest.TestCase):
         titles = {chrome: "Vagas - Google Chrome", firefox: "Instagram — Mozilla Firefox"}
         active = {chrome: True, firefox: False}
         apps = [("Google Chrome", ":1.9", "/app"), ("Firefox", ":1.5", "/app")]
-        with mock.patch.object(a, "shell_focus", return_value=None), \
+        with mock.patch.object(a, "_locked", return_value=False), \
+             mock.patch.object(a, "shell_focus", return_value=None), \
              mock.patch.object(a, "_browser_apps", return_value=apps), \
              mock.patch.object(a, "_children", side_effect=lambda b, p: [chrome] if b == ":1.9" else [firefox]), \
              mock.patch.object(a, "_role", return_value="frame"), \
@@ -116,7 +122,8 @@ class ShellFocusTest(unittest.TestCase):
     def focused(self, focus):
         a = self.a
         apps = [("Google Chrome", ":1.9", "/app"), ("Firefox", ":1.5", "/app")]
-        with mock.patch.object(a, "shell_focus", return_value=focus), \
+        with mock.patch.object(a, "_locked", return_value=False), \
+             mock.patch.object(a, "shell_focus", return_value=focus), \
              mock.patch.object(a, "_browser_apps", return_value=apps), \
              mock.patch.object(a, "_children", side_effect=lambda b, p: [self.chrome] if b == ":1.9" else [self.firefox]), \
              mock.patch.object(a, "_role", return_value="frame"), \
@@ -138,8 +145,37 @@ class ShellFocusTest(unittest.TestCase):
     def test_chrome_audio_marker_still_matches(self):
         self.titles[self.chrome] = "Stories • Instagram - Reprodução de áudio - Google Chrome"
         self.active[self.chrome] = False  # Chrome sem ACTIVE nenhum (visto depois do login)
-        self.assertEqual(self.focused((900, "Stories • Instagram - Google Chrome")),
-                         "Stories • Instagram - Reprodução de áudio")
+        self.assertEqual(self.focused((900, "Stories • Instagram - Google Chrome")), "Stories • Instagram")
+
+    def test_exact_title_beats_prefix(self):
+        self.titles[self.firefox] = "Instagrammable places - Pesquisa Google — Mozilla Firefox"
+        self.titles[self.chrome] = "Instagram - Reprodução de áudio - Google Chrome"
+        self.a._pids[":1.5"] = 900  # mesmo navegador, duas janelas
+        self.assertEqual(self.focused((900, "Instagram - Google Chrome")), "Instagram")
+
+    def test_locked_screen_counts_nothing(self):
+        with mock.patch.object(self.a, "_locked", return_value=True):
+            self.assertIsNone(self.a.focused_tab())
+
+    def test_extension_hiccup_counts_nothing(self):
+        a = a11y_mod.A11y()
+        with mock.patch.object(a11y_mod.dbus, "session"), \
+             mock.patch.object(a11y_mod.dbus, "call", return_value=("google-chrome", "X", 900)):
+            self.assertEqual(a.shell_focus(), (900, "X"))
+        with mock.patch.object(a11y_mod.dbus, "session"), \
+             mock.patch.object(a11y_mod.dbus, "call", side_effect=GLib.Error("timeout")):
+            self.assertEqual(a.shell_focus(), (0, ""))  # já respondeu antes: nada em foco
+            self.assertIsNone(a11y_mod.A11y().shell_focus())  # nunca respondeu: sem extensão
+            a._shell_at -= a11y_mod.SHELL_GRACE
+            self.assertIsNone(a.shell_focus())  # sumiu de vez: regra antiga, não zero para sempre
+
+    def test_chrome_url_from_uri(self):
+        a = a11y_mod.A11y()
+        a.conn, frame, doc = object(), (":1.9", "/f"), (":1.9", "/d")
+        answers = {"DocURL": "", "URI": "https://www.instagram.com/stories/"}
+        with mock.patch.object(a, "_find_doc", return_value=doc), \
+             mock.patch.object(a11y_mod.dbus, "call", side_effect=lambda *x, **k: (answers[x[5].unpack()[0]],)):
+            self.assertEqual(a._url_for(frame, "Stories • Instagram"), "https://www.instagram.com/stories/")
 
     def test_title_mismatch_falls_back_to_active(self):
         self.assertEqual(self.focused((900, "Pinterest - Google Chrome")), "(2) Pinterest")
@@ -150,7 +186,8 @@ class ShellFocusTest(unittest.TestCase):
         self.active[self.chrome2] = True
         a = self.a
         apps = [("Google Chrome", ":1.9", "/app")]
-        with mock.patch.object(a, "shell_focus", return_value=(900, "Salvar como")), \
+        with mock.patch.object(a, "_locked", return_value=False), \
+             mock.patch.object(a, "shell_focus", return_value=(900, "Salvar como")), \
              mock.patch.object(a, "_browser_apps", return_value=apps), \
              mock.patch.object(a, "_children", return_value=[self.chrome, self.chrome2]), \
              mock.patch.object(a, "_role", return_value="frame"), \
@@ -178,7 +215,8 @@ class FocusedTabCacheTest(unittest.TestCase):
                 raise GLib.Error("UnknownObject")
             return names[path]
 
-        with mock.patch.object(a, "shell_focus", return_value=None), \
+        with mock.patch.object(a, "_locked", return_value=False), \
+             mock.patch.object(a, "shell_focus", return_value=None), \
              mock.patch.object(a, "_browser_apps", return_value=[("Firefox", ":1.5", "/app")]), \
              mock.patch.object(a, "_children", return_value=[frame]), \
              mock.patch.object(a, "_role", return_value="frame"), \

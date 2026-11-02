@@ -43,6 +43,7 @@ STATE_ACTIVE, STATE_SELECTED = 1, 23
 TIMEOUT = 500
 SEARCH_SECONDS = 0.5  # teto de tempo para uma busca na árvore de um navegador
 CACHE_SECONDS = 3
+SHELL_GRACE = 10  # s: falha da extensão até aqui é soluço, não ausência
 SHELL_FOCUS = ("org.gnome.Shell", "/io/github/luiz_nast/Maverick/Focus", "io.github.luiz_nast.Maverick.Focus")
 MAX_NODES = 1500
 MAX_DEPTH = 14
@@ -50,6 +51,7 @@ MAX_DEPTH = 14
 PRIVATE_MARKERS = ("navegação privativa", "navegação privada", "private browsing", "navegación privada",
                    "navigation privée", "privater modus", "incognito", "anônima", "inprivate")
 BLOCKED_AUDIO = {"reproduzir som na aba", "play tab", "reproducir pestaña", "lire l’onglet"}
+AUDIO_MARK = re.compile(r" - (Reprodução de áudio|Audio playing)$")
 TITLE_SUFFIXES = (" — Mozilla Firefox", " - Mozilla Firefox", " - Google Chrome", " - Chromium", " - Brave")
 
 
@@ -71,7 +73,8 @@ def selected_title(window_title: str) -> str:
     """Título da aba selecionada a partir do título da janela."""
     for suffix in TITLE_SUFFIXES:
         if (i := window_title.find(suffix)) >= 0:
-            return window_title[:i]
+            # O Chrome põe o aviso de som só no nome acessível, não no título da aba.
+            return AUDIO_MARK.sub("", window_title[:i])
     return "" if window_title.lower().startswith("mozilla firefox") else window_title
 
 
@@ -95,7 +98,7 @@ class Window:
     @property
     def tabs_fresh(self) -> bool:
         sel = self.selected_title.strip()
-        return bool(sel) and any(t.selected and t.title.strip() == sel for t in self.tabs)
+        return bool(sel) and any(t.selected and AUDIO_MARK.sub("", t.title.strip()) == sel for t in self.tabs)
 
     def is_youtube(self) -> bool:
         sounding = [t for t in self.tabs if t.audio == "playing"] if self.tabs_fresh else []
@@ -121,6 +124,7 @@ class A11y:
         # janela -> quando passou a ACTIVE (0.0: já estava ativa na primeira varredura)
         self._active_since: dict[tuple[str, str], float] = {}
         self._scanned = False
+        self._shell_at = -SHELL_GRACE
 
     def _connect(self) -> Gio.DBusConnection | None:
         if self.conn is None:
@@ -217,6 +221,8 @@ class A11y:
         no Firefox ou em outro app). Com a extensão do GNOME, só o navegador dono da
         janela em foco conta. Sem ela, com mais de uma ativa, vale a que ficou ativa
         por último."""
+        if self._locked():
+            return None
         focus = self.shell_focus()
         apps = self._browser_apps()
         if focus is not None:
@@ -236,9 +242,9 @@ class A11y:
                 try:
                     if self._role(*frame) != "frame":
                         continue
-                    # Pelo começo: o Chrome põe " - Reprodução de áudio" só no nome acessível.
-                    if focus_tab and selected_title(self._name(*frame)).startswith(focus_tab):
-                        titled.append(frame)
+                    # Pelo começo (o título do GNOME pode estar cortado); o mais curto é o exato.
+                    if focus_tab and (name := selected_title(self._name(*frame)).strip()).startswith(focus_tab):
+                        titled.append((len(name), frame))
                     if self._states(*frame) >> STATE_ACTIVE & 1:
                         active.append(frame)
                 except GLib.Error:
@@ -247,7 +253,7 @@ class A11y:
         self._active_since = {f: self._active_since.get(f, now) for f in active}
         self._scanned = True
         if titled:  # o GNOME diz a janela pelo título
-            frame = titled[0]
+            frame = min(titled, key=lambda t: t[0])[1]
         elif focus is not None:
             # Título não bate (mudando, ou diálogo do navegador): só vale se uma única
             # janela do navegador em foco estiver ativa; outra pode estar presa.
@@ -266,12 +272,25 @@ class A11y:
             return None
 
     def shell_focus(self) -> tuple[int, str] | None:
-        """(PID, título) da janela em foco segundo a extensão do GNOME; None sem ela."""
+        """(PID, título) da janela em foco segundo a extensão do GNOME; None sem ela.
+        Falha logo depois de uma resposta vale como "nada em foco" (PID 0), não como
+        volta à regra do ACTIVE, que pode estar preso; se a extensão sumir de vez
+        (desligada, incompatível), volta a regra antiga."""
         try:
             _cls, title, pid = dbus.call(dbus.session(), *SHELL_FOCUS, "Get", reply="(ssu)", timeout=TIMEOUT)
         except GLib.Error:
-            return None
+            return (0, "") if time.monotonic() - self._shell_at < SHELL_GRACE else None
+        self._shell_at = time.monotonic()
         return pid, title
+
+    @staticmethod
+    def _locked() -> bool:
+        """Tela bloqueada: nada está em foco (a extensão do GNOME é desligada no bloqueio)."""
+        try:
+            return dbus.call(dbus.session(), "org.gnome.ScreenSaver", "/org/gnome/ScreenSaver",
+                             "org.gnome.ScreenSaver", "GetActive", reply="(b)", timeout=TIMEOUT)[0]
+        except GLib.Error:
+            return False
 
     def focused_url(self) -> str | None:
         tab = self.focused_tab()
@@ -289,8 +308,14 @@ class A11y:
                 self._docs.pop(frame, None)
                 return None
             self._docs[frame] = doc
-        return dbus.call(self.conn, *doc, "org.a11y.atspi.Document", "GetAttributeValue",
-                         GLib.Variant("(s)", ("DocURL",)), "(s)", TIMEOUT)[0] or None
+        try:
+            for attr in ("DocURL", "URI"):  # Firefox, Chrome
+                if url := dbus.call(self.conn, *doc, "org.a11y.atspi.Document", "GetAttributeValue",
+                                    GLib.Variant("(s)", (attr,)), "(s)", TIMEOUT)[0]:
+                    return url
+        except GLib.Error:
+            self._docs.pop(frame, None)  # sem URL fica o título; o próximo ciclo procura de novo
+        return None
 
     def _find_doc(self, frame: tuple[str, str], title: str) -> tuple[str, str] | None:
         """Documento cujo nome é o título da aba visível."""
