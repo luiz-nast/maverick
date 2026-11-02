@@ -88,7 +88,8 @@ class StuckActiveWindowTest(unittest.TestCase):
         titles = {chrome: "Vagas - Google Chrome", firefox: "Instagram — Mozilla Firefox"}
         active = {chrome: True, firefox: False}
         apps = [("Google Chrome", ":1.9", "/app"), ("Firefox", ":1.5", "/app")]
-        with mock.patch.object(a, "_browser_apps", return_value=apps), \
+        with mock.patch.object(a, "shell_focus", return_value=None), \
+             mock.patch.object(a, "_browser_apps", return_value=apps), \
              mock.patch.object(a, "_children", side_effect=lambda b, p: [chrome] if b == ":1.9" else [firefox]), \
              mock.patch.object(a, "_role", return_value="frame"), \
              mock.patch.object(a, "_states", side_effect=lambda *f: int(active[f]) << a11y_mod.STATE_ACTIVE), \
@@ -99,6 +100,61 @@ class StuckActiveWindowTest(unittest.TestCase):
             self.assertEqual(a.focused_tab()[0], "Instagram")
             active[firefox] = False  # saiu do Firefox
             self.assertEqual(a.focused_tab()[0], "Vagas")
+
+
+class ShellFocusTest(unittest.TestCase):
+    """Com a extensão do GNOME, o foco real manda; o ACTIVE preso do Chrome não conta."""
+
+    def setUp(self):
+        self.a = a11y_mod.A11y()
+        self.a.conn = object()
+        self.chrome, self.firefox = (":1.9", "/chrome"), (":1.5", "/firefox")
+        self.titles = {self.chrome: "(2) Pinterest - Google Chrome", self.firefox: "Vagas — Mozilla Firefox"}
+        self.active = {self.chrome: True, self.firefox: False}  # Chrome preso como ativo
+        self.a._pids = {":1.9": 900, ":1.5": 500}
+
+    def focused(self, focus):
+        a = self.a
+        apps = [("Google Chrome", ":1.9", "/app"), ("Firefox", ":1.5", "/app")]
+        with mock.patch.object(a, "shell_focus", return_value=focus), \
+             mock.patch.object(a, "_browser_apps", return_value=apps), \
+             mock.patch.object(a, "_children", side_effect=lambda b, p: [self.chrome] if b == ":1.9" else [self.firefox]), \
+             mock.patch.object(a, "_role", return_value="frame"), \
+             mock.patch.object(a, "_states", side_effect=lambda *f: int(self.active[f]) << a11y_mod.STATE_ACTIVE), \
+             mock.patch.object(a, "_name", side_effect=lambda *f: self.titles[f]), \
+             mock.patch.object(a, "_url_for", return_value=None):
+            tab = a.focused_tab()
+        return tab and tab[0]
+
+    def test_other_app_focused_counts_nothing(self):
+        self.assertIsNone(self.focused((4242, "Claude")))
+
+    def test_focused_browser_wins_over_stuck_chrome(self):
+        self.assertEqual(self.focused((500, "Vagas — Mozilla Firefox")), "Vagas")
+
+    def test_focused_chrome(self):
+        self.assertEqual(self.focused((900, "(2) Pinterest - Google Chrome")), "(2) Pinterest")
+
+    def test_title_mismatch_falls_back_to_active(self):
+        self.assertEqual(self.focused((900, "Pinterest - Google Chrome")), "(2) Pinterest")
+
+    def test_title_mismatch_with_two_active_counts_nothing(self):
+        self.chrome2 = (":1.9", "/chrome2")
+        self.titles[self.chrome2] = "Imprimir"
+        self.active[self.chrome2] = True
+        a = self.a
+        apps = [("Google Chrome", ":1.9", "/app")]
+        with mock.patch.object(a, "shell_focus", return_value=(900, "Salvar como")), \
+             mock.patch.object(a, "_browser_apps", return_value=apps), \
+             mock.patch.object(a, "_children", return_value=[self.chrome, self.chrome2]), \
+             mock.patch.object(a, "_role", return_value="frame"), \
+             mock.patch.object(a, "_states", side_effect=lambda *f: int(self.active[f]) << a11y_mod.STATE_ACTIVE), \
+             mock.patch.object(a, "_name", side_effect=lambda *f: self.titles[f]), \
+             mock.patch.object(a, "_url_for", return_value=None):
+            self.assertIsNone(a.focused_tab())
+
+    def test_without_extension_keeps_old_rule(self):
+        self.assertEqual(self.focused(None), "(2) Pinterest")
 
 
 class FocusedTabCacheTest(unittest.TestCase):
@@ -116,7 +172,8 @@ class FocusedTabCacheTest(unittest.TestCase):
                 raise GLib.Error("UnknownObject")
             return names[path]
 
-        with mock.patch.object(a, "_browser_apps", return_value=[("Firefox", ":1.5", "/app")]), \
+        with mock.patch.object(a, "shell_focus", return_value=None), \
+             mock.patch.object(a, "_browser_apps", return_value=[("Firefox", ":1.5", "/app")]), \
              mock.patch.object(a, "_children", return_value=[frame]), \
              mock.patch.object(a, "_role", return_value="frame"), \
              mock.patch.object(a, "_states", return_value=1 << a11y_mod.STATE_ACTIVE), \

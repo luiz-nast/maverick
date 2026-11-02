@@ -16,6 +16,11 @@ dela traz a aba visível. O estado SHOWING dos documentos fica parado depois de 
 de aba (visto no Firefox 156), então o documento é achado pelo nome, que acompanha o
 título da página, e a URL vem da interface Document (DocURL).
 
+O Chrome continua ACTIVE depois de perder o foco para um app que não é navegador
+(visto no Chrome com o foco no app do Claude). Com a extensão do GNOME do Maverick
+(data/gnome-extension) o próprio GNOME diz qual janela está em foco: vale só o
+navegador dono dela, e a janela com o mesmo título.
+
 Exige o navegador no barramento de acessibilidade: no GNOME, `toolkit-accessibility`
 ligado antes de o navegador abrir.
 """
@@ -38,6 +43,7 @@ STATE_ACTIVE, STATE_SELECTED = 1, 23
 TIMEOUT = 500
 SEARCH_SECONDS = 0.5  # teto de tempo para uma busca na árvore de um navegador
 CACHE_SECONDS = 3
+SHELL_FOCUS = ("org.gnome.Shell", "/io/github/luiz_nast/Maverick/Focus", "io.github.luiz_nast.Maverick.Focus")
 MAX_NODES = 1500
 MAX_DEPTH = 14
 
@@ -109,6 +115,7 @@ class A11y:
         self._cache_at = 0.0
         self._cache: list[Window] | None = None
         self._app_names: dict[str, str | None] = {}  # bus -> nome (None = ignorar)
+        self._pids: dict[str, int] = {}  # bus -> PID do app
         self.strikes = dbus.Strikes()  # apps que não respondem
         self._docs: dict[tuple[str, str], tuple[str, str]] = {}  # janela -> documento da aba visível
         # janela -> quando passou a ACTIVE (0.0: já estava ativa na primeira varredura)
@@ -154,6 +161,7 @@ class A11y:
                 pid = dbus.call(self.conn, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
                                 "GetConnectionUnixProcessID", GLib.Variant("(s)", (bus,)), "(u)", TIMEOUT)[0]
                 self._app_names[bus] = None if pid == os.getpid() else self._name(bus, path)
+                self._pids[bus] = pid
             except GLib.Error:
                 self.strikes.fail(bus)
                 return None
@@ -167,7 +175,7 @@ class A11y:
         try:
             apps = self._children("org.a11y.atspi.Registry", "/org/a11y/atspi/accessible/root")
         except GLib.Error:
-            self.conn, self._app_names = None, {}
+            self.conn, self._app_names, self._pids = None, {}, {}
             return []
         found = []
         for bus, path in apps:
@@ -206,9 +214,17 @@ class A11y:
         janela de navegador estiver em foco. A URL é None se o documento não for achado.
 
         Uma janela pode ficar presa como ACTIVE (visto no Chrome, por horas, com o foco
-        no Firefox). Com mais de uma ativa, vale a que ficou ativa por último."""
-        active = []
-        for _name, bus, path in self._browser_apps():
+        no Firefox ou em outro app). Com a extensão do GNOME, só o navegador dono da
+        janela em foco conta. Sem ela, com mais de uma ativa, vale a que ficou ativa
+        por último."""
+        focus = self.shell_focus()
+        apps = self._browser_apps()
+        if focus is not None:
+            apps = [app for app in apps if self._pids.get(app[1]) == focus[0]]
+            if not apps:
+                return None  # o foco está num app que não é navegador
+        active, titled = [], []
+        for _name, bus, path in apps:
             try:
                 frames = self._children(bus, path)
             except GLib.Error:
@@ -217,22 +233,43 @@ class A11y:
             self.strikes.ok(bus)
             for frame in frames:
                 try:
-                    if self._role(*frame) == "frame" and self._states(*frame) >> STATE_ACTIVE & 1:
+                    if self._role(*frame) != "frame":
+                        continue
+                    if focus is not None and self._name(*frame) == focus[1]:
+                        titled.append(frame)
+                    if self._states(*frame) >> STATE_ACTIVE & 1:
                         active.append(frame)
                 except GLib.Error:
                     continue
         now = time.monotonic() if self._scanned else 0.0
         self._active_since = {f: self._active_since.get(f, now) for f in active}
         self._scanned = True
-        if not active:
+        if titled:  # o GNOME diz a janela pelo título
+            frame = titled[0]
+        elif focus is not None:
+            # Título não bate (mudando, ou diálogo do navegador): só vale se uma única
+            # janela do navegador em foco estiver ativa; outra pode estar presa.
+            if len(active) != 1:
+                return None
+            frame = active[0]
+        elif active:
+            frame = max(active, key=self._active_since.__getitem__)
+        else:
             return None
-        frame = max(active, key=self._active_since.__getitem__)
         try:
             title = selected_title(self._name(*frame)).strip()
             return title, self._url_for(frame, title) if title else None
         except GLib.Error:
             self._docs.pop(frame, None)
             return None
+
+    def shell_focus(self) -> tuple[int, str] | None:
+        """(PID, título) da janela em foco segundo a extensão do GNOME; None sem ela."""
+        try:
+            _cls, title, pid = dbus.call(dbus.session(), *SHELL_FOCUS, "Get", reply="(ssu)", timeout=TIMEOUT)
+        except GLib.Error:
+            return None
+        return pid, title
 
     def focused_url(self) -> str | None:
         tab = self.focused_tab()

@@ -16,6 +16,9 @@ inst 644 "$ROOT/data/maverick.service" usr/lib/systemd/user/maverick.service
 inst 644 "$ROOT/data/io.github.luiz_nast.Maverick.desktop" usr/share/applications/io.github.luiz_nast.Maverick.desktop
 inst 644 "$ROOT/data/io.github.luiz_nast.Maverick.svg" usr/share/icons/hicolor/scalable/apps/io.github.luiz_nast.Maverick.svg
 inst 644 "$ROOT/data/io.github.luiz_nast.Maverick.policy" usr/share/polkit-1/actions/io.github.luiz_nast.Maverick.policy
+for f in "$ROOT"/data/gnome-extension/*; do
+    inst 644 "$f" "usr/share/gnome-shell/extensions/maverick@luiz-nast.github.io/$(basename "$f")"
+done
 inst 644 "$ROOT/LICENSE" usr/share/doc/maverick/copyright
 
 mkdir -p "$STAGE/usr/bin"

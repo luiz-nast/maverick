@@ -53,6 +53,13 @@ RING_COLORS = {k: _rgba(v) for k, v in
 STATUS_TEXT = {"idle": "Parado", "playing": "Assistindo agora", "warning": "Quase no limite",
                "blocked": "Tempo esgotado, volte amanhã"}
 # (subtítulo, ícone, classe) da linha "Janela anônima"
+FOCUS_EXT = "maverick@luiz-nast.github.io"
+# (subtítulo, ícone, classe) da linha "Foco exato"
+FOCUS_STATES = {
+    "on": ("Ligado: o GNOME diz qual janela está em foco", "emblem-ok-symbolic", "success"),
+    "login": ("Saia e entre de novo na sessão para ligar", "view-refresh-symbolic", "warning"),
+    "off": ("Desligado: o Chrome pode contar com o foco em outro app", "dialog-warning-symbolic", "warning"),
+}
 PRIVATE_STATES = {
     "exact": ("Detecção exata: separa YouTube de outros sites pelo título da aba", "emblem-ok-symbolic", "success"),
     "restart": ("Feche e abra o Firefox para ativar a detecção exata", "view-refresh-symbolic", "warning"),
@@ -107,6 +114,8 @@ class Window(Adw.ApplicationWindow):
         self._block_status = blocking.status()
         self._a11y = A11y()
         self._iface = Gio.Settings.new("org.gnome.desktop.interface")
+        source = Gio.SettingsSchemaSource.get_default()
+        self._shell = Gio.Settings.new("org.gnome.shell") if source and source.lookup("org.gnome.shell", True) else None
         self._timers: dict = {}
         self._focus_rows: dict[str, Adw.ExpanderRow] = {}
         self._focus_bars: dict[str, tuple[Gtk.ProgressBar, Gtk.Label]] = {}
@@ -237,6 +246,9 @@ class Window(Adw.ApplicationWindow):
                                        lambda v, d=domain, k=key: self._commit_cycle(d, k, v)))
             self._focus_rows[domain] = row
             group.add(row)
+        self.focus_row, self.focus_icon, self.focus_button = self._action_row(
+            "Foco exato (extensão do GNOME)", "Ativar", self._on_enable_focus)
+        group.add(self.focus_row)
         return group
 
     def _build_today(self) -> Adw.PreferencesGroup:
@@ -312,6 +324,13 @@ class Window(Adw.ApplicationWindow):
         self.private_button.set_visible(not enabled)
         self.fallback_row.set_visible(mode != "exact")
 
+        enabled = bool(self._shell) and FOCUS_EXT in self._shell.get_strv("enabled-extensions")
+        mode = "on" if self._a11y.shell_focus() is not None else "login" if enabled else "off"
+        subtitle, icon, css = FOCUS_STATES[mode]
+        self.focus_row.set_subtitle(subtitle)
+        self._set_icon(self.focus_icon, icon, css)
+        self.focus_button.set_visible(mode == "off" and self._shell is not None)
+
         st = blocking.status()
         if force or st != self._block_status:
             self._block_status = st
@@ -364,6 +383,13 @@ class Window(Adw.ApplicationWindow):
             self._edit_config(lambda c: c.sites[domain].__setitem__(key, minutes))
             self._toast(f"{rule['name']}: vale a partir da próxima rodada")
             self.refresh_usage()
+
+    def _on_enable_focus(self, _btn) -> None:
+        exts = self._shell.get_strv("enabled-extensions")
+        if FOCUS_EXT not in exts:
+            self._shell.set_strv("enabled-extensions", exts + [FOCUS_EXT])
+        self._toast("Saia e entre de novo na sessão para ligar o foco exato", 6)
+        self.refresh_slow()
 
     def _on_enable_a11y(self, _btn) -> None:
         self._iface.set_boolean("toolkit-accessibility", True)

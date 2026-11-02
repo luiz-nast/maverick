@@ -8,7 +8,7 @@ Maverick is a Linux desktop app with three jobs:
 
 | | |
 |---|---|
-| Version | 0.5.13 |
+| Version | 0.5.14 |
 | Language | Python 3.10+, no pip dependencies |
 | UI | GTK 4 + libadwaita (window), GTK 3 (on-screen counter) |
 | Tested on | Ubuntu 26.04, GNOME 50 (Wayland), Firefox 156 (snap) |
@@ -94,7 +94,7 @@ Subdomains match (`br.pinterest.com`, `www.instagram.com`). Rules are edited in 
 
 A second counts for a site when all hold:
 
-1. A browser window is the active (focused) window, read from the AT-SPI `ACTIVE` state of its frame. A window can stay stuck as `ACTIVE` (seen in Chrome for hours while Firefox had the focus); when several windows are active, the one that became active most recently wins. Right after the daemon starts, windows already active tie until the next focus change.
+1. A browser window is the focused window. With the bundled GNOME Shell extension `maverick@luiz-nast.github.io` enabled, GNOME itself reports the focused window (PID and title) on D-Bus (`org.gnome.Shell`, object `/io/github/luiz_nast/Maverick/Focus`, method `io.github.luiz_nast.Maverick.Focus.Get` → `(wm_class, title, pid)`): only the browser owning that PID counts, and its frame with the same title (if no title matches, its most recently `ACTIVE` frame). A non-browser app in focus counts nothing. Without the extension, the AT-SPI `ACTIVE` state of the frame decides; Chrome keeps `ACTIVE` after losing focus to a non-browser app (seen with Claude Desktop focused), so time keeps counting; when several windows are active, the one that became active most recently wins.
 2. The visible tab of that window is on the site. The window title gives the visible tab's title; the document whose name equals that title gives the URL through the AT-SPI Document attribute `DocURL`. The documents' `SHOWING` state is not used: Firefox 156 leaves it stale after tab switches. If no document matches yet, the site name as a word in the tab title decides (`(3) Instagram`, `Pin em ... | Pinterest`).
 3. The user is present: keyboard or mouse input in the last 90 s (GNOME `org.gnome.Mutter.IdleMonitor`), or media from that site is playing.
 
@@ -153,8 +153,8 @@ The list lives in `blocked_sites` in the config and can be edited in the window 
 From the release:
 
 ```bash
-wget https://github.com/luiz-nast/maverick/releases/download/v0.5.13/maverick_0.5.13_all.deb
-sudo apt install ./maverick_0.5.13_all.deb
+wget https://github.com/luiz-nast/maverick/releases/download/v0.5.14/maverick_0.5.14_all.deb
+sudo apt install ./maverick_0.5.14_all.deb
 systemctl --user daemon-reload
 systemctl --user enable --now maverick.service
 ```
@@ -262,6 +262,7 @@ maverick/blocking.py    default site list, domain validation, hosts/policy rende
 maverick/blockctl.py    root helper: writes /etc/hosts and browser policies atomically
 maverick/store.py       config and state JSON, limit rule, shared usage status
 data/                   icon, .desktop, polkit policy, systemd unit, helper launcher
+data/gnome-extension/   GNOME Shell extension exposing the focused window on D-Bus
 packaging/build-deb.sh  builds dist/maverick_<version>_all.deb
 packaging/install-system.sh
 tests/                  unittest suite
@@ -304,7 +305,7 @@ GDK_BACKEND=wayland python3 packaging/screenshot.py docs/screenshot.png   # READ
 - Layer 2 is tested against Firefox 156 (snap). Firefox can leave the tab list in the accessibility tree stale for a window that is not in the foreground; the window title stays current, so detection then relies on the selected tab only. A YouTube video playing in a non-selected tab of such a window is not detected.
 - With accessibility on, GTK apps and Firefox maintain accessibility trees, which costs some CPU and memory. Maverick's own window and counter are on that bus too; the scan skips its own process to avoid blocking on itself.
 - A browser with MPRIS disabled (Firefox `media.hardwaremediakeys.enabled = false`) is invisible to the daemon.
-- Focused-site time depends on the browser reporting the `ACTIVE` state of its window over AT-SPI. Firefox 156 does (verified live); Electron apps (for example Claude Desktop) do not. If a site never counts, `maverick check` shows whether a focused tab is seen.
+- Without the GNOME extension, focused-site time depends on the browser's AT-SPI `ACTIVE` state, which Chrome leaves set after focus moves to a non-browser app. Enabling the extension needs one log out and in (GNOME Wayland loads new extensions only at login); the window row "Foco exato (extensão do GNOME)" shows its state and enables it. If a site never counts, `maverick check` shows whether a focused tab is seen.
 - The cover sits over the work area but the browser keeps keyboard focus: keyboard scrolling still moves the hidden page.
 
 ## Troubleshooting

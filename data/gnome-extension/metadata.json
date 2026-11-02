@@ -1,0 +1,7 @@
+{
+  "uuid": "maverick@luiz-nast.github.io",
+  "name": "Maverick",
+  "description": "Diz ao Maverick qual janela está em foco (o navegador nem sempre avisa quando perde o foco).",
+  "shell-version": ["45", "46", "47", "48", "49", "50"],
+  "url": "https://github.com/luiz-nast/maverick"
+}
