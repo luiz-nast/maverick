@@ -52,6 +52,12 @@ class SiteRuleTest(unittest.TestCase):
         c.sites["pinterest.com"]["allow_minutes"] = 30
         self.assertEqual(evaluate(c, "pinterest.com", st, 1001.0, count=False).allow, 300)
 
+    def test_site_fraction(self):
+        from maverick.sites import SiteStatus
+        self.assertEqual(SiteStatus("X", False, 90, 180).fraction, 0.5)
+        self.assertEqual(SiteStatus("X", True, 0, 180, 60).fraction, 1.0)
+        self.assertEqual(SiteStatus("X", False, 0, 0).fraction, 1.0)
+
     def test_day_roll_keeps_cycle(self):
         s = State(day="1999-01-01", sites={"pinterest.com": {"seconds": 50, "blocked_until": 9e12}})
         s.roll_day()

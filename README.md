@@ -8,7 +8,7 @@ Maverick is a Linux desktop app with three jobs:
 
 | | |
 |---|---|
-| Version | 0.5.12 |
+| Version | 0.5.13 |
 | Language | Python 3.10+, no pip dependencies |
 | UI | GTK 4 + libadwaita (window), GTK 3 (on-screen counter) |
 | Tested on | Ubuntu 26.04, GNOME 50 (Wayland), Firefox 156 (snap) |
@@ -88,7 +88,7 @@ Every second the daemon lists `org.mpris.MediaPlayer2.*` on the session bus and 
 
 A round allows the given minutes of focused time. When they run out, the site is blocked for the given minutes of wall-clock time, then a new round starts. Changing either value applies from the next round, so a running block cannot be shortened.
 
-Subdomains match (`br.pinterest.com`, `www.instagram.com`). Rules are edited in the window group "Tempo de tela por site".
+Subdomains match (`br.pinterest.com`, `www.instagram.com`). Rules are edited in the window group "Tempo de tela por site"; each site header shows a bar with the share of the free round already used (full and red while blocked).
 
 ### What counts as focused
 
@@ -153,8 +153,8 @@ The list lives in `blocked_sites` in the config and can be edited in the window 
 From the release:
 
 ```bash
-wget https://github.com/luiz-nast/maverick/releases/download/v0.5.12/maverick_0.5.12_all.deb
-sudo apt install ./maverick_0.5.12_all.deb
+wget https://github.com/luiz-nast/maverick/releases/download/v0.5.13/maverick_0.5.13_all.deb
+sudo apt install ./maverick_0.5.13_all.deb
 systemctl --user daemon-reload
 systemctl --user enable --now maverick.service
 ```

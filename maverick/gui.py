@@ -34,6 +34,11 @@ CSS = """
 .status-pill.warning { background: alpha(@warning_color, 0.22); color: @warning_color; }
 .status-pill.blocked { background: alpha(@error_color, 0.18); color: @error_color; }
 .hero { padding: 12px 0 6px 0; }
+.site-bar trough { min-height: 8px; border-radius: 4px; }
+.site-bar progress { min-height: 8px; border-radius: 4px; background-color: @success_color; }
+.site-bar.warning progress { background-color: @warning_color; }
+.site-bar.blocked progress { background-color: @error_color; }
+.site-pct { font-feature-settings: "tnum"; min-width: 3.2em; }
 """
 
 
@@ -103,7 +108,8 @@ class Window(Adw.ApplicationWindow):
         self._a11y = A11y()
         self._iface = Gio.Settings.new("org.gnome.desktop.interface")
         self._timers: dict = {}
-        self._focus_rows: dict[str, Adw.PreferencesRow] = {}
+        self._focus_rows: dict[str, Adw.ExpanderRow] = {}
+        self._focus_bars: dict[str, tuple[Gtk.ProgressBar, Gtk.Label]] = {}
 
         page = Adw.PreferencesPage()
         for group in (self._build_hero(), self._build_youtube(), self._build_focus_sites(),
@@ -219,6 +225,12 @@ class Window(Adw.ApplicationWindow):
                         "Usa a detecção exata (Janela anônima > Ativar).")
         for domain, rule in self.config.sites.items():
             row = Adw.ExpanderRow(title=rule["name"])
+            # Faixa no cabeçalho: quanto da rodada livre já foi gasto.
+            bar = Gtk.ProgressBar(valign=Gtk.Align.CENTER, width_request=90, css_classes=["site-bar"])
+            pct = Gtk.Label(css_classes=["site-pct", "dim-label", "numeric"], xalign=1)
+            row.add_suffix(bar)
+            row.add_suffix(pct)
+            self._focus_bars[domain] = (bar, pct)
             for key, title, high in (("allow_minutes", "Tempo livre (min)", 60),
                                      ("block_minutes", "Tempo bloqueado (min)", 240)):
                 row.add_row(self._spin(title, 1, high, 1, rule[key],
@@ -261,7 +273,13 @@ class Window(Adw.ApplicationWindow):
             if not rule:
                 continue
             st = copy.deepcopy(state.sites.get(domain, {}))
-            row.set_subtitle(f"{evaluate(self.config, domain, st, now_ts, False).summary} · "
+            site = evaluate(self.config, domain, st, now_ts, False)
+            bar, pct = self._focus_bars[domain]
+            bar.set_fraction(site.fraction)
+            bar.set_css_classes(["site-bar", "blocked" if site.blocked else
+                                 "warning" if site.allow - site.used <= 60 else "ok"])
+            pct.set_text(f"{round(site.fraction * 100)}%")
+            row.set_subtitle(f"{site.summary} · "
                              f"ciclo {rule['allow_minutes']}/{rule['block_minutes']} · "
                              f"hoje {fmt(st.get('seconds', 0))} em foco")
 

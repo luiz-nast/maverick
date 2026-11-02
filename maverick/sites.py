@@ -42,6 +42,11 @@ class SiteStatus:
         return f"{self.name} {fmt(self.used)} / {fmt(self.allow)}"
 
     @property
+    def fraction(self) -> float:
+        """Quanto da rodada livre já foi gasto (0 a 1); bloqueado é 1."""
+        return 1.0 if self.blocked or not self.allow else min(1.0, self.used / self.allow)
+
+    @property
     def summary(self) -> str:
         return (f"Bloqueado: libera em {fmt(self.wait)}" if self.blocked
                 else f"Livre: {fmt(self.allow - self.used)} restantes nesta rodada")
