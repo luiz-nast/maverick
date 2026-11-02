@@ -135,6 +135,12 @@ class ShellFocusTest(unittest.TestCase):
     def test_focused_chrome(self):
         self.assertEqual(self.focused((900, "(2) Pinterest - Google Chrome")), "(2) Pinterest")
 
+    def test_chrome_audio_marker_still_matches(self):
+        self.titles[self.chrome] = "Stories • Instagram - Reprodução de áudio - Google Chrome"
+        self.active[self.chrome] = False  # Chrome sem ACTIVE nenhum (visto depois do login)
+        self.assertEqual(self.focused((900, "Stories • Instagram - Google Chrome")),
+                         "Stories • Instagram - Reprodução de áudio")
+
     def test_title_mismatch_falls_back_to_active(self):
         self.assertEqual(self.focused((900, "Pinterest - Google Chrome")), "(2) Pinterest")
 

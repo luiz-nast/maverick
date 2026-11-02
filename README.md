@@ -8,7 +8,7 @@ Maverick is a Linux desktop app with three jobs:
 
 | | |
 |---|---|
-| Version | 0.5.14 |
+| Version | 0.5.15 |
 | Language | Python 3.10+, no pip dependencies |
 | UI | GTK 4 + libadwaita (window), GTK 3 (on-screen counter) |
 | Tested on | Ubuntu 26.04, GNOME 50 (Wayland), Firefox 156 (snap) |
@@ -94,7 +94,7 @@ Subdomains match (`br.pinterest.com`, `www.instagram.com`). Rules are edited in 
 
 A second counts for a site when all hold:
 
-1. A browser window is the focused window. With the bundled GNOME Shell extension `maverick@luiz-nast.github.io` enabled, GNOME itself reports the focused window (PID and title) on D-Bus (`org.gnome.Shell`, object `/io/github/luiz_nast/Maverick/Focus`, method `io.github.luiz_nast.Maverick.Focus.Get` → `(wm_class, title, pid)`): only the browser owning that PID counts, and its frame with the same title (if no title matches, its most recently `ACTIVE` frame). A non-browser app in focus counts nothing. Without the extension, the AT-SPI `ACTIVE` state of the frame decides; Chrome keeps `ACTIVE` after losing focus to a non-browser app (seen with Claude Desktop focused), so time keeps counting; when several windows are active, the one that became active most recently wins.
+1. A browser window is the focused window. With the bundled GNOME Shell extension `maverick@luiz-nast.github.io` enabled, GNOME itself reports the focused window (PID and title) on D-Bus (`org.gnome.Shell`, object `/io/github/luiz_nast/Maverick/Focus`, method `io.github.luiz_nast.Maverick.Focus.Get` → `(wm_class, title, pid)`): only the browser owning that PID counts, and its frame whose tab title starts with the focused tab title (Chrome adds " - Reprodução de áudio" only to the accessible name; if none matches, its most recently `ACTIVE` frame). A non-browser app in focus counts nothing. Without the extension, the AT-SPI `ACTIVE` state of the frame decides; Chrome keeps `ACTIVE` after losing focus to a non-browser app (seen with Claude Desktop focused), so time keeps counting; when several windows are active, the one that became active most recently wins.
 2. The visible tab of that window is on the site. The window title gives the visible tab's title; the document whose name equals that title gives the URL through the AT-SPI Document attribute `DocURL`. The documents' `SHOWING` state is not used: Firefox 156 leaves it stale after tab switches. If no document matches yet, the site name as a word in the tab title decides (`(3) Instagram`, `Pin em ... | Pinterest`).
 3. The user is present: keyboard or mouse input in the last 90 s (GNOME `org.gnome.Mutter.IdleMonitor`), or media from that site is playing.
 
@@ -153,8 +153,8 @@ The list lives in `blocked_sites` in the config and can be edited in the window 
 From the release:
 
 ```bash
-wget https://github.com/luiz-nast/maverick/releases/download/v0.5.14/maverick_0.5.14_all.deb
-sudo apt install ./maverick_0.5.14_all.deb
+wget https://github.com/luiz-nast/maverick/releases/download/v0.5.15/maverick_0.5.15_all.deb
+sudo apt install ./maverick_0.5.15_all.deb
 systemctl --user daemon-reload
 systemctl --user enable --now maverick.service
 ```

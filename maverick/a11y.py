@@ -223,6 +223,7 @@ class A11y:
             apps = [app for app in apps if self._pids.get(app[1]) == focus[0]]
             if not apps:
                 return None  # o foco está num app que não é navegador
+        focus_tab = selected_title(focus[1]).strip() if focus else ""
         active, titled = [], []
         for _name, bus, path in apps:
             try:
@@ -235,7 +236,8 @@ class A11y:
                 try:
                     if self._role(*frame) != "frame":
                         continue
-                    if focus is not None and self._name(*frame) == focus[1]:
+                    # Pelo começo: o Chrome põe " - Reprodução de áudio" só no nome acessível.
+                    if focus_tab and selected_title(self._name(*frame)).startswith(focus_tab):
                         titled.append(frame)
                     if self._states(*frame) >> STATE_ACTIVE & 1:
                         active.append(frame)
