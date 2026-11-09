@@ -8,7 +8,7 @@ Maverick is a Linux desktop app with three jobs:
 
 | | |
 |---|---|
-| Version | 0.5.16 |
+| Version | 0.5.17 |
 | Language | Python 3.10+, no pip dependencies |
 | UI | GTK 4 + libadwaita (window), GTK 3 (on-screen counter) |
 | Tested on | Ubuntu 26.04, GNOME 50 (Wayland), Firefox 156 (snap) |
@@ -95,7 +95,7 @@ Subdomains match (`br.pinterest.com`, `www.instagram.com`). Rules are edited in 
 A second counts for a site when all hold:
 
 1. A browser window is the focused window. With the bundled GNOME Shell extension `maverick@luiz-nast.github.io` enabled, GNOME itself reports the focused window (PID and title) on D-Bus (`org.gnome.Shell`, object `/io/github/luiz_nast/Maverick/Focus`, method `io.github.luiz_nast.Maverick.Focus.Get` → `(wm_class, title, pid)`): only the browser owning that PID counts, and its frame whose tab title starts with the focused tab title (Chrome adds " - Reprodução de áudio" only to the accessible name; if none matches, its most recently `ACTIVE` frame). A non-browser app in focus counts nothing, and neither does a locked screen (`org.gnome.ScreenSaver.GetActive`). If the extension stops answering, the next 10 s count nothing; after that the AT-SPI rule below applies again. Chrome's " - Reprodução de áudio" / " - Audio playing" marker is stripped from tab titles. Without the extension, the AT-SPI `ACTIVE` state of the frame decides; Chrome keeps `ACTIVE` after losing focus to a non-browser app (seen with Claude Desktop focused), so time keeps counting; when several windows are active, the one that became active most recently wins.
-2. The visible tab of that window is on the site. The window title gives the visible tab's title; the document whose name equals that title gives the URL through the AT-SPI Document attribute `DocURL` (Firefox) or `URI` (Chrome). The documents' `SHOWING` state is not used: Firefox 156 leaves it stale after tab switches. If no document matches yet, the site name as a word in the tab title decides (`(3) Instagram`, `Pin em ... | Pinterest`).
+2. The visible tab of that window is on the site. The window title gives the visible tab's title; the document whose name equals that title gives the URL through the AT-SPI Document attribute `DocURL` (Firefox) or `URI` (Chrome). The documents' `SHOWING` state is not used: Firefox 156 leaves it stale after tab switches. If there is no URL (Chrome never gives one here), the tab title decides, but only where the site itself puts its name: the whole title (`(3) Instagram`), the start or end of a part split by ` • ` or ` | ` (`Stories • Instagram`, `Pin em ... | Pinterest`), or `no/on Instagram:`. The name in the middle of another page's title (a GitHub repo, a Google search) does not count.
 3. The user is present: keyboard or mouse input in the last 90 s (GNOME `org.gnome.Mutter.IdleMonitor`), or media from that site is playing.
 
 A tab open in the background, a browser window behind another app, or an unattended screen does not count. Requires the browser on the accessibility bus (see detection layer 2).
@@ -153,8 +153,8 @@ The list lives in `blocked_sites` in the config and can be edited in the window 
 From the release:
 
 ```bash
-wget https://github.com/luiz-nast/maverick/releases/download/v0.5.16/maverick_0.5.16_all.deb
-sudo apt install ./maverick_0.5.16_all.deb
+wget https://github.com/luiz-nast/maverick/releases/download/v0.5.17/maverick_0.5.17_all.deb
+sudo apt install ./maverick_0.5.17_all.deb
 systemctl --user daemon-reload
 systemctl --user enable --now maverick.service
 ```

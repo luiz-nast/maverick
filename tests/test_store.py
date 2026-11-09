@@ -44,6 +44,14 @@ class SiteRuleTest(unittest.TestCase):
         self.assertEqual(site_for_title("(3) Instagram", rules), "instagram.com")
         self.assertEqual(site_for_title("Pin em Receitas | Pinterest", rules), "pinterest.com")
         self.assertIsNone(site_for_title("Instagrammable places - YouTube", rules))
+        for title in ("Instagram", "Stories • Instagram", "Fulano (@fulano) • Fotos e vídeos do Instagram",
+                      "Fulano (@fulano) • Instagram photos and videos", 'Fulano no Instagram: "praia"'):
+            self.assertEqual(site_for_title(title, rules), "instagram.com", title)
+        self.assertEqual(site_for_title("(2) Pinterest", rules), "pinterest.com")
+        for title in ("luiz-nast/maverick-truck: Instagram and YouTube on Android: 7 minutes of use",
+                      "instagram - Pesquisa Google", "Como crescer no Instagram em 2026 - YouTube",
+                      "Pinterest clone in React - GitHub"):
+            self.assertIsNone(site_for_title(title, rules), title)
 
     def test_cycle_change_applies_next_round(self):
         from maverick.sites import evaluate

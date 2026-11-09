@@ -23,10 +23,20 @@ def site_for_url(url: str | None, domains) -> str | None:
 
 
 def site_for_title(title: str, rules: dict) -> str | None:
-    """Plano B sem URL: o nome do site como palavra no título da aba ("(3) Instagram",
-    "Pin em ... | Pinterest")."""
-    return next((d for d, r in rules.items()
-                 if re.search(rf"(^|\W){re.escape(r['name'].lower())}(\W|$)", title.lower())), None)
+    """Plano B sem URL (o Chrome não dá a URL): o nome do site onde o próprio site o põe.
+    O título inteiro ("(3) Instagram"), o começo ou o fim de um trecho separado por
+    " • " ou " | " ("Stories • Instagram", "Pin em ... | Pinterest") ou "no/on Instagram:".
+    Nome solto no meio de outro título (GitHub, pesquisa do Google) não conta."""
+    t = title.lower().strip()
+    parts = re.split(r"\s[•|]\s", t)
+
+    def hit(name: str) -> bool:
+        n = re.escape(name.lower())
+        if re.fullmatch(rf"(\(\d+\)\s*)?{n}", t) or re.search(rf"\s(no|on) {n}:", t):
+            return True
+        return len(parts) > 1 and any(re.match(rf"{n}(\s|$)", p) or re.search(rf"(^|\s){n}$", p) for p in parts)
+
+    return next((d for d, r in rules.items() if hit(r["name"])), None)
 
 
 @dataclass
