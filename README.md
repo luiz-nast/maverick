@@ -164,7 +164,6 @@ From source (builds the `.deb`, installs it, restarts the daemon; also the updat
 ```bash
 git clone https://github.com/luiz-nast/maverick.git ~/maverick
 ~/maverick/packaging/install-system.sh
-packaging/screenshot.py renders docs/screenshot.png with sample data
 ```
 
 Installed paths:
@@ -183,7 +182,7 @@ Dependencies: `python3`, `python3-gi`, `gir1.2-gtk-3.0`, `gir1.2-gtk-4.0`, `gir1
 
 Uninstall: `sudo apt remove maverick`.
 
-Do not start the daemon from an AppArmor-confined process (for example from inside a snap): the Firefox snap answers its D-Bus calls with `Access denied`. The systemd user service and a normal terminal are unconfined.
+Started from an AppArmor-confined process (for example from inside a snap), the daemon gets `Access denied` from the Firefox snap on its D-Bus calls and cannot read Firefox. The systemd user service and a normal terminal are unconfined.
 
 ## CLI
 
